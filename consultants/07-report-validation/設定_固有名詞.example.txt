@@ -1,0 +1,5 @@
+# 1行に1つ、誤記を検出したい正式名称を記載します。
+架空株式会社
+架空サービス
+Google Analytics 4
+Microsoft Clarity

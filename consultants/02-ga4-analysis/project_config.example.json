@@ -1,0 +1,9 @@
+{
+  "analysis": {
+    "period_column": "period",
+    "current_label": "current",
+    "comparison_label": "previous",
+    "dimension_columns": ["channel"],
+    "metric_columns": ["sessions", "users", "conversions"]
+  }
+}

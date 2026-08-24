@@ -1,0 +1,7 @@
+period,channel,sessions,users,conversions
+current,Organic Search,1200,980,42
+current,Paid Search,800,720,31
+current,Direct,500,430,12
+previous,Organic Search,1000,850,35
+previous,Paid Search,900,810,28
+previous,Direct,520,450,15

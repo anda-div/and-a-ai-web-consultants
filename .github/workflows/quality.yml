@@ -1,0 +1,28 @@
+name: quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python syntax
+        run: python -m compileall -q consultants tools
+      - name: Unit tests
+        run: |
+          python consultants/02-ga4-analysis/tests/test_analyze_ga4.py
+          python consultants/04-customer-search-competitor/tests/test_analyze_search_console.py
+          python consultants/05-issue-prioritization/tests/test_prioritize_findings.py
+          python consultants/06-ux-ui-design/tests/test_build_action_specs.py
+          python consultants/07-report-validation/tests/test_compare_periods.py
+      - name: Public safety scan
+        run: python tools/public_scan.py .

@@ -1,0 +1,28 @@
+{
+  "findings": [
+    {
+      "finding_id": "F-001",
+      "job": "02",
+      "title": "商品詳細からカートへの遷移率が低下",
+      "statement": "架空データでは前期比12%低下しています。",
+      "fact": "架空データでは前期比12%低下しています。",
+      "hypothesis": "購入判断に必要な情報が分散している可能性があります。",
+      "evidence": ["metric=商品詳細→カート遷移率"],
+      "confidence": "high",
+      "status": "hypothesis",
+      "priority_scores": {"evidence": 4, "impact": 5, "confidence": 4, "effort": 2, "risk": 2, "urgency": 4}
+    },
+    {
+      "finding_id": "F-002",
+      "job": "04",
+      "title": "比較検索の表示回数に対してCTRが低い",
+      "statement": "架空データでは表示720回、CTR1.1%です。",
+      "fact": "架空データでは表示720回、CTR1.1%です。",
+      "hypothesis": "タイトルが比較意図に答えていない可能性があります。",
+      "evidence": ["impressions=720", "ctr=0.011"],
+      "confidence": "medium",
+      "status": "hypothesis",
+      "priority_scores": {"evidence": 4, "impact": 3, "confidence": 3, "effort": 1, "risk": 1, "urgency": 3}
+    }
+  ]
+}

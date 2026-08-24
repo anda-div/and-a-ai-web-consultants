@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AI Web Consultant Finding",
+  "type": "object",
+  "required": ["finding_id", "job", "statement", "evidence", "status"],
+  "properties": {
+    "finding_id": {"type": "string", "pattern": "^F-[0-9]{3,}$"},
+    "job": {"type": "string", "pattern": "^0[1-7]$"},
+    "statement": {"type": "string", "minLength": 1},
+    "evidence": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "source_files": {"type": "array", "items": {"type": "string"}},
+    "period": {"type": "string"},
+    "scope": {"type": "string"},
+    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+    "status": {"type": "string", "enum": ["confirmed", "hypothesis", "unverified"]},
+    "counter_hypotheses": {"type": "array", "items": {"type": "string"}},
+    "next_check": {"type": "string"}
+  },
+  "additionalProperties": true
+}

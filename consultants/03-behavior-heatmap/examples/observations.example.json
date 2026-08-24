@@ -1,0 +1,15 @@
+{
+  "findings": [
+    {
+      "finding_id": "F-001",
+      "job": "03",
+      "statement": "架空のSP画面では主要CTA到達前にスクロール到達率が低下しています。",
+      "evidence": ["sample_sp_scroll.png", "対象期間: 2026-07"],
+      "source_files": ["sample_sp_scroll.png"],
+      "confidence": "medium",
+      "status": "hypothesis",
+      "counter_hypotheses": ["対象セッション数が少ない", "流入目的が異なる"],
+      "next_check": "GA4のランディングページ別CVRとセッション数を確認する。"
+    }
+  ]
+}

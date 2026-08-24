@@ -1,0 +1,42 @@
+# 実案件データ
+input/**
+output/**
+**/input/**
+**/output/**
+!**/input/.gitkeep
+!**/output/.gitkeep
+
+# ローカル設定・認証情報
+project_config.json
+**/project_config.json
+.env
+.env.*
+!.env.example
+credentials*.json
+service-account*.json
+token*.json
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Node / Playwright
+node_modules/
+playwright-report/
+test-results/
+
+# Office / OS
+~$*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# AIのローカル状態
+.codex/
+.claude/settings.local.json
+_runs/

@@ -1,0 +1,18 @@
+{
+  "project_name": "架空サイト改善プロジェクト",
+  "site_name": "Example Shop",
+  "site_url": "https://example.com/",
+  "timezone": "Asia/Tokyo",
+  "target_period": {
+    "start": "2026-07-01",
+    "end": "2026-07-31"
+  },
+  "comparison_period": {
+    "start": "2026-06-01",
+    "end": "2026-06-30"
+  },
+  "primary_kpis": ["sessions", "conversions", "conversion_rate"],
+  "conversion_events": ["generate_lead"],
+  "excluded_domains": [],
+  "notes": "このファイルを project_config.json としてコピーし、実案件の値はコミットしないでください。"
+}

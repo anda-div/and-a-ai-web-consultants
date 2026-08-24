@@ -1,0 +1,3 @@
+# 公開ページのURLを1行に1件記載します。
+https://example.com/
+https://example.org/
