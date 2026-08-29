@@ -1,0 +1,115 @@
+{
+  "_comment": "計測の実体と、レポート生成時の判定ルール。",
+  "_status_note": "確定していない項目は status に状況を書き、レポートにも明記する。",
+  "ga4_properties": [
+    {
+      "key": "site",
+      "label": "対象サイト",
+      "property_name": "（GA4のプロパティ名）",
+      "property_id": "（プロパティID）",
+      "measurement_id": "（測定ID）",
+      "domains": [
+        "https://example.com/"
+      ],
+      "status": "確認済み"
+    },
+    {
+      "key": "lp",
+      "label": "広告LP",
+      "property_name": "（GA4のプロパティ名）",
+      "property_id": "（プロパティID）",
+      "domains": [
+        "https://lp.example.com"
+      ],
+      "status": "確認済み",
+      "caution": "1つのプロパティが複数ドメインを計測している場合、hostName で対象を限定しないと数値が二重になる。"
+    }
+  ],
+  "gtm_containers": [
+    {
+      "domain": "example.com",
+      "container_id": "（コンテナID）",
+      "workspace": "（ワークスペース名）",
+      "published": "（公開日）"
+    }
+  ],
+  "cross_domain": {
+    "pairs": [
+      [
+        "example.com",
+        "lp.example.com"
+      ]
+    ],
+    "status": "未確認"
+  },
+  "ad_lp_segments": [
+    {
+      "key": "lp1",
+      "label": "広告LP①",
+      "url": "https://example.com/pages/landing",
+      "dimension": "landingPagePlusQueryString",
+      "regex": "^/pages/landing"
+    },
+    {
+      "key": "lp2",
+      "label": "広告LP②",
+      "url": "https://lp.example.com",
+      "dimension": "hostName",
+      "regex": "^(www\\.)?lp\\.example\\.com$"
+    }
+  ],
+  "form_pages": {
+    "_comment": "CV導線が着地するページ。URL→レポート表示名。",
+    "/pages/contact": "お問い合わせ",
+    "/pages/estimate": "見積依頼"
+  },
+  "custom_dimensions": [
+    {
+      "name": "訪問回数",
+      "parameter": "visit_number",
+      "scope": "event",
+      "registered": "（登録日）",
+      "note": "カスタムディメンションは登録日より前のデータに遡及しない。"
+    }
+  ],
+  "key_events": {
+    "status": "未確定",
+    "measured": [
+      {
+        "name": "contact_complete",
+        "label": "お問い合わせ完了",
+        "method": "GTM",
+        "set_on": "（設定日）"
+      }
+    ],
+    "pending": "CVの定義と計上先の整理。確定するまではレポートに「仮CV」と明記する。"
+  },
+  "reporting_identity": {
+    "current": "デバイスベース",
+    "checked_on": "（確認日）",
+    "note": "User-IDを使う分析を行う場合は「ブレンド」または「計測データ」への変更が必要。"
+  },
+  "referrer_buckets": {
+    "_comment": "遷移元を表示用の区分名に寄せるルール。上から順に評価する。",
+    "null_label": "(直接・参照元なし)",
+    "default_label": "その他・外部参照",
+    "rules": [
+      {
+        "contains": "lp.example.com",
+        "label": "広告LP②"
+      },
+      {
+        "contains": "example.com/pages/landing",
+        "label": "広告LP①"
+      },
+      {
+        "regex": "^https?://(www\\.)?example\\.com/?$",
+        "label": "自サイト TOP"
+      },
+      {
+        "contains": "example.com",
+        "label": "自サイト内の他ページ"
+      }
+    ]
+  }
+}

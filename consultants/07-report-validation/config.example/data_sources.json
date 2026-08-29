@@ -1,0 +1,45 @@
+{
+  "_comment": "入力データの置き場所と、GASが出力するシート名の対応。",
+  "input_dir": "_input",
+  "ga4": {
+    "dir": "_input/GA4_data",
+    "files": {
+      "site": "ga4_site.xlsx",
+      "ad_lp": "ga4_ad_lp.xlsx"
+    },
+    "gas_scripts": {
+      "site": "consultants/02-ga4-analysis/gas/ga4_monthly_export.gs",
+      "ad_lp": "consultants/02-ga4-analysis/gas/ga4_monthly_export.gs"
+    },
+    "sheets_ad_lp": [
+      "00_取得設定・ログ",
+      "01_LP比較_KPI",
+      "02_LP比較_推移",
+      "03_LP比較_日別",
+      "04_LP比較_デバイス",
+      "05_LP比較_流入元",
+      "06_LP比較_キャンペーン",
+      "07_LP比較_CVファネル",
+      "09_LP別_イベント一覧"
+    ],
+    "sheets_site_used_by_ad_lp": [
+      "08_ページ間遷移"
+    ],
+    "_cross_note": "LPのフォーム到達先が別プロパティで計測される場合、サイト側のページ間遷移から遷移元を読む。"
+  },
+  "search_console": {
+    "dir": "_input/search_console",
+    "file_pattern": "SC_{site_key}_{period}.xlsx",
+    "sheet_page": "ページ"
+  },
+  "clarity": {
+    "captures_dir": "_input/clarity_captures",
+    "lp_captures_dir": "_input/heatmaps",
+    "known_issues_doc": "consultants/03-behavior-heatmap/CLARITY_METRICS.md"
+  },
+  "web_captures": {
+    "dir": "_input/web_captures",
+    "self_urls": "_input/_self_urls.txt",
+    "competitor_urls": "_input/_competitor_urls.txt"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "_comment": "納品先と、その先のエンドクライアント。レポートの表記に使う。",
+  "client": {
+    "name": "架空ウェブ支援株式会社",
+    "name_en": "EXAMPLE AGENCY",
+    "role": "レポートの制作者としてレポートに表記される会社"
+  },
+  "end_client": {
+    "name": "架空ストア株式会社",
+    "aliases": [
+      "架空ストア",
+      "example-shop"
+    ],
+    "industry": "オンライン販売",
+    "role": "分析対象サイトの運営会社"
+  },
+  "report_author_label": "架空ウェブ支援株式会社",
+  "_report_author_note": "レポートに載せる制作者名。裏方の会社名は出さない場合が多い。",
+  "toolkit_provider": {
+    "name": "（ツールキットの提供元）",
+    "url": "https://example.com/",
+    "contact": "（担当者名）",
+    "_note": "レポート本文には出さない。"
+  }
+}

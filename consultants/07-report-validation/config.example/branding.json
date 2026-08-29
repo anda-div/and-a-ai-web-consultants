@@ -1,0 +1,81 @@
+{
+  "_comment": "PowerPointの体裁。クライアント提供テンプレートに合わせる。",
+  "template": {
+    "path": "_templates/template.pptx",
+    "received_on": "（受領日）",
+    "provided_by": "（提供元）",
+    "_note": "原本は編集しない。生成物は必ず別ファイルで出力する。マスター／レイアウト／テーマをそのまま使用し、独自テーマで代替しない。"
+  },
+  "slide_size_cm": {
+    "width": 25.4,
+    "height": 19.05,
+    "_note": "テンプレートの実寸に合わせる"
+  },
+  "fonts": {
+    "japanese": "（日本語フォント名）",
+    "latin": "（英数フォント名）",
+    "body_min_pt": 10,
+    "_body_min_note": "本文の最小サイズ。これを下回るなら文字を縮めず文章を短くする。"
+  },
+  "colors": {
+    "navy": "1F497D",
+    "blue": "4F81BD",
+    "gray": "595959",
+    "lgray": "808080",
+    "light": "EDF1F7",
+    "white": "FFFFFF",
+    "red": "C00000",
+    "green": "2E7D32",
+    "orange": "E97132"
+  },
+  "layouts": {
+    "_comment": "テンプレート内のレイアウト名。差し替えたら必ず見直す。",
+    "title_slide": "タイトル スライド",
+    "content": "タイトルとコンテンツ",
+    "section_header": "SECTION_HEADER"
+  },
+  "geometry_cm": {
+    "_comment": "本文領域とフッターの座標。テンプレートの装飾に合わせた実測値。",
+    "content_left": 1.15,
+    "content_width": 23.1,
+    "subtitle_top": 1.0,
+    "subtitle_max_width": 22.5,
+    "summary_top": 16.3,
+    "summary_height": 1.05,
+    "note_top": 17.4,
+    "note_limit": 18.3,
+    "_note_limit_comment": "フッターの装飾が始まる位置より上で注記を止める。"
+  },
+  "box_rules": {
+    "_comment": "箱の余白ルール。見積りより常に高く作る。",
+    "pad": {
+      "loose": 1.2,
+      "mid": 1.15,
+      "tight": 1.1
+    },
+    "fit_margin": 0.97
+  },
+  "heatmap_cm": {
+    "_comment": "縦長ヒートマップを分割して横並びに置くときの座標。",
+    "left_margin": 0.9,
+    "text_width": 7.2,
+    "gap_inner": 0.12,
+    "gap_group": 0.45,
+    "label_top": 1.85,
+    "label_height": 0.5,
+    "image_top": 2.62,
+    "image_height": 13.5,
+    "source_dir": "_input/heatmaps/stitched",
+    "piece_dir": "_output/_hm_pieces",
+    "order_labels": {
+      "2": "｜左＝上部／右＝下部",
+      "3": "｜左→右＝上部→中部→下部",
+      "4": "｜左→右＝上部→下部"
+    }
+  },
+  "decorations": {
+    "logo": "（ロゴの説明）",
+    "footer": "（フッター装飾の説明）"
+  },
+  "spec_document": "docs/レポート体裁仕様.md"
+}

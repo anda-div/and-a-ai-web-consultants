@@ -9,3 +9,6 @@
 - JOB 03に `scripts/clarity_metrics_extract.js` を追加。ヒートマップ画面から集計値をJSONで取り出す（日本語・英語UI対応）。
 - JOB 03に `CLARITY_CAPTURE.md` と `scripts/clarity_heatmap_capture.py` を追加。`#heatmapVisual` の `scrollTop` を直接制御することで、熱とページ画像の位置ずれを起こさずに分割キャプチャ・結合する。
 - `.gitignore` にClarity用ブラウザプロファイル（`.clarity_profile`）を追加。
+- JOB 07に `scripts/deck_kit.py` を追加。PowerPointレポートの作図部品（ページの型・箱・表・グラフ・要約・注記・ヒートマップ配置・日本語の禁則処理）を、案件固有の値を持たない形でまとめた。
+- JOB 07に `scripts/report_config.py` と `config.example/` を追加。会社名・計測ID・URL・テンプレート・配色・座標・固有名詞をConfigへ分離し、公開リポジトリ側には値を置かない構成にした。
+- JOB 07の `README.md`・`JOB.md`・`AGENTS.md`・`CLAUDE.md` にレポート生成の手順と体裁ルール（本文の最小サイズ、収まらないときは文章を短くする）を追記。
