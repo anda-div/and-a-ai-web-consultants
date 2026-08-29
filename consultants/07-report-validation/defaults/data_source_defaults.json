@@ -1,0 +1,47 @@
+{
+  "_comment": "入力データの既定。実ファイル名だけ _config 側で指定する。",
+  "input_dir": "_input",
+  "ga4": {
+    "dir": "_input/GA4_data",
+    "sheets_ad_lp": [
+      "00_取得設定・ログ",
+      "01_3LP比較_KPI",
+      "02_3LP比較_6ヶ月推移",
+      "03_3LP比較_日別推移",
+      "04_3LP比較_デバイス",
+      "05_3LP比較_流入元",
+      "06_3LP比較_キャンペーン",
+      "07_3LP比較_CVファネル",
+      "09_LP別_イベント一覧"
+    ],
+    "sheets_site": [
+      "01_KPIサマリ",
+      "02_6ヶ月推移",
+      "03_チャネル区分別",
+      "04_流入元",
+      "05_LP別",
+      "06_ページ別PV",
+      "07_イベント・CV",
+      "08_ページ間遷移",
+      "09_フォーム_ECファネル"
+    ],
+    "sheets_site_used_by_ad_lp": [
+      "08_ページ間遷移"
+    ],
+    "_cross_note": "LPのフォーム到達先が別プロパティで計測される場合、サイト側のページ間遷移から遷移元を読む。"
+  },
+  "search_console": {
+    "dir": "_input/search_console",
+    "file_pattern": "SC_{site_key}_{period}.xlsx",
+    "sheet_page": "ページ"
+  },
+  "clarity": {
+    "captures_dir": "_input/clarity_captures",
+    "lp_captures_dir": "_input/_lp_clarity_captures"
+  },
+  "web_captures": {
+    "dir": "_input/web_captures",
+    "self_urls": "_input/_self_urls.txt",
+    "competitor_urls": "_input/_competitor_urls.txt"
+  }
+}

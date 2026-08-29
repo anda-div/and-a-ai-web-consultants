@@ -6,6 +6,16 @@ output/**
 !**/input/.gitkeep
 !**/output/.gitkeep
 
+# クライアント提供のテンプレート・成果物（公開リポジトリに置かない）
+*.pptx
+*.potx
+*.ppt
+*.xlsx
+*.xls
+_templates/
+**/_templates/
+**/templates/*.pptx
+
 # ローカル設定・認証情報
 .clarity_profile/
 **/.clarity_profile/
