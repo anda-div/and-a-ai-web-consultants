@@ -19,4 +19,5 @@
 - JOB 07に `TEMPLATE_POLICY.md` を追加。テンプレートの有無と用紙比率を生成前に確定させる手順と確認文面。あわせて `scripts/inspect_template.py`（テンプレート解析）と `scripts/make_default_templates.py`（16:9 / 4:3 の既定雛形）を追加。
 - `.gitignore` に pptx / xlsx / テンプレートフォルダの除外を追加。クライアント提供のテンプレートが公開リポジトリへ混入しないようにした。
 - JOB 07の `site_report_kit.py` に `two_col_tables(fill=True)` と `kpi_and_chart(chart_h=...)` を追加。行数の少ない表やグラフでページ下半分が空くのを防ぐ。あわせて「ページの下半分を空けない」ルールを README・AGENTS・CLAUDE に明文化した。
+- JOB 07に `scripts/check_layout.py` を追加。生成したPPTXの重なり・枠外・画像のゆがみ・細すぎる画像・ページ下部の空き・本文の文字サイズを座標から測る。画像の内側に収まる注記（Before/Afterの吹き出し）と、分割して横並びにしたヒートマップは意図した表現として対象外にする。要対応があれば終了コード1を返す。実案件に適用して、これまで気づけていなかった細すぎるキャプチャ3件を検出した。
 - JOB 07に `scripts/check_stray_files.py` を追加。複数行のコードをシェル経由で渡したときに `>` がリダイレクトと解釈されて生まれる0バイトのファイルを検出する。ルート `AGENTS.md`・`CLAUDE.md` に「複数行のコードをシェルの引数として渡さない」を追記。
