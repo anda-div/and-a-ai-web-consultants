@@ -91,8 +91,11 @@ def txt_w(t, size):
 
 
 # ============================================================ 本体
-def build_kit(prs, cfg, *, strip_template_slides: bool = True):
+def build_kit(prs, cfg, *, report_key=None, strip_template_slides: bool = True):
     """Presentation と Config を束ねて、作図関数一式を返す。
+
+    report_key を渡すと、そのレポート用の座標上書き（reports.json の
+    geometry_overrides）を反映する。渡さなければ branding.json の既定値を使う。
 
     返り値の属性はすべて関数または定数。呼び出し側は
         run, tb, content, section, box, table, chart, summary, note …
@@ -104,7 +107,7 @@ def build_kit(prs, cfg, *, strip_template_slides: bool = True):
     LGRAY, LIGHT, WHITE = C["lgray"], C["light"], C["white"]
 
     LNAME = B["layouts"]
-    G = B["geometry_cm"]
+    G = cfg.geometry(report_key)
     LEFT = G["content_left"]
     WIDTH = G["content_width"]
     SUB_TOP = G["subtitle_top"]
@@ -119,7 +122,7 @@ def build_kit(prs, cfg, *, strip_template_slides: bool = True):
     BOX_FIT_MARGIN = B["box_rules"]["fit_margin"]
     SW, SH = cfg.slide_size_cm()
 
-    HM = B["heatmap_cm"]
+    HM = cfg.heatmap(report_key)
     HM_DIR = cfg.path(HM["source_dir"])
     PIECE_DIR = cfg.path(HM["piece_dir"])
     os.makedirs(PIECE_DIR, exist_ok=True)

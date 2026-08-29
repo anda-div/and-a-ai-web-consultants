@@ -1,8 +1,14 @@
 # -*- coding: utf-8 -*-
 """Config ローダー（汎用）
 
-クライアント固有の値は一切持たない。プロジェクト直下の `_config/` にある
-JSON 群を読み、レポート生成スクリプトから使いやすい形で返すだけの部品。
+クライアント固有の値は一切持たない。次の2つを重ねて読む。
+
+  1. defaults/   … 汎用の既定値（公開リポジトリ側。提供者が更新できる）
+  2. _config/    … その案件でしか決められない値（クライアントのPC上）
+
+同じキーがあれば _config/ が優先される（キー単位の上書き）。
+_config を薄く保つことで、改善を見つけたときに defaults の差し替えだけで
+全利用者へ届けられる。
 
 将来この部品は公開リポジトリ（JOB 07）へ移す。
 そのため、ここにクライアント名・URL・数値を書いてはいけない。
@@ -21,25 +27,56 @@ import os
 import re
 
 
+def _merge(base: dict, over: dict) -> dict:
+    """既定値に上書きを重ねる。辞書は再帰的に、それ以外は置き換え。"""
+    out = dict(base)
+    for k, v in over.items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def find_defaults(module_dir: str) -> str | None:
+    """既定値フォルダを探す。公開リポジトリの配置と、手元の配置の両方に対応する。"""
+    for c in (os.path.join(module_dir, "defaults"),
+              os.path.join(os.path.dirname(module_dir), "defaults")):
+        if os.path.isdir(c):
+            return c
+    return None
+
+
 class Config:
-    def __init__(self, root: str):
+    def __init__(self, root: str, defaults_dir: str | None = None):
         self.root = root
         self.dir = os.path.join(root, "_config")
+        self.defaults_dir = defaults_dir or find_defaults(
+            os.path.dirname(os.path.abspath(__file__)))
         self.client = self._load("client.json")
         self.analytics = self._load("analytics.json")
-        self.reports_def = self._load("reports.json")
-        self.branding = self._load("branding.json")
-        self.sources = self._load("data_sources.json")
+        self.reports_def = self._load("reports.json", "report_defaults.json")
+        self.branding = self._load("branding.json", "branding_defaults.json")
+        self.sources = self._load("data_sources.json", "data_source_defaults.json")
 
     # ------------------------------------------------------------ 基本
-    def _load(self, name: str) -> dict:
+    def _load(self, name: str, default_name: str | None = None) -> dict:
+        base = {}
+        if default_name and self.defaults_dir:
+            dp = os.path.join(self.defaults_dir, default_name)
+            if os.path.exists(dp):
+                with open(dp, encoding="utf-8") as f:
+                    base = json.load(f)
         path = os.path.join(self.dir, name)
         if not os.path.exists(path):
+            if base:
+                return base
             raise FileNotFoundError(
                 f"Config が見つかりません: {path}\n"
                 f"_config/ にクライアント固有の設定を置いてください。")
         with open(path, encoding="utf-8") as f:
-            return json.load(f)
+            over = json.load(f)
+        return _merge(base, over) if base else over
 
     def path(self, *parts: str) -> str:
         """プロジェクト直下からの相対パスを絶対パスにする"""
@@ -86,14 +123,45 @@ class Config:
     def report(self, key: str) -> dict:
         for r in self.reports_def["reports"]:
             if r["key"] == key:
+                # 章立ては既定を使い、_config に書かれていればそちらを優先する
+                if "chapters" not in r:
+                    tpl = self.reports_def.get("chapter_templates", {})
+                    if key in tpl:
+                        r = dict(r, chapters=tpl[key])
                 return r
         raise KeyError(f"reports.json に '{key}' がありません")
+
+    def competitor(self) -> dict:
+        """競合比較のルール（既定＋案件の上書き）"""
+        return self.reports_def.get("competitor", {})
 
     def ga4_property(self, key: str) -> dict:
         for p in self.analytics["ga4_properties"]:
             if p["key"] == key:
                 return p
         raise KeyError(f"analytics.json に GA4プロパティ '{key}' がありません")
+
+    def geometry(self, report_key: str | None = None) -> dict:
+        """本文領域の座標。レポート別の上書きがあれば重ねて返す。"""
+        g = dict(self.branding["geometry_cm"])
+        if report_key:
+            ov = self.report(report_key).get("geometry_overrides") or {}
+            g.update({k: v for k, v in ov.items() if not k.startswith("_")})
+        return g
+
+    def page_geometry(self, report_key: str) -> dict:
+        """ページ型ごとの座標。既定にレポート別の上書きを重ねて返す。"""
+        base = self.reports_def.get("page_geometry") or {}
+        ov = self.report(report_key).get("page_geometry") or {}
+        return _merge(base, ov) if base else ov
+
+    def heatmap(self, report_key: str | None = None) -> dict:
+        """ヒートマップ配置の設定。レポート別の上書きがあれば重ねて返す。"""
+        h = dict(self.branding["heatmap_cm"])
+        if report_key:
+            ov = self.report(report_key).get("heatmap_overrides") or {}
+            h.update({k: v for k, v in ov.items() if not k.startswith("_")})
+        return h
 
     def form_pages(self) -> dict:
         return {k: v for k, v in self.analytics["form_pages"].items()
@@ -142,6 +210,7 @@ if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     c = load()
     print("プロジェクト直下 :", c.root)
+    print("既定値フォルダ   :", c.defaults_dir or "（なし）")
     print("クライアント     :", c.client["client"]["name"])
     print("エンドクライアント:", c.client["end_client"]["name"])
     print("テンプレート     :", c.template())
@@ -151,3 +220,11 @@ if __name__ == "__main__":
     print("GA4(サイト)      :", c.ga4_xlsx("site"))
     print("フォームページ   :", len(c.form_pages()), "件")
     print("表紙の制作者行   :", c.author_line())
+    print("競合ルール       :", {k: v for k, v in c.competitor().items()
+                                 if k in ("selection_mode", "pages_per_competitor",
+                                          "max_captures")})
+    for rk in ("site", "ad_lp"):
+        try:
+            print(f"章立て({rk})      :", len(c.report(rk).get("chapters", [])), "章")
+        except KeyError:
+            pass

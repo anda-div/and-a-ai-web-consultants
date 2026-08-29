@@ -1,7 +1,5 @@
 {
-  "_comment": "生成するレポートの定義。章立ての採否と対象の指定。",
-  "output_dir": "_output",
-  "naming": "{report_name}_{site_key}_{period}_v{version}.pptx",
+  "_comment": "この案件でしか決められない値だけを書く。章立て・競合の方法論・ページ座標などの既定値は ../defaults/ にあり、ここに書かなければそちらが使われる。",
   "site_key": "example",
   "current_period": {
     "_comment": "毎月ここだけ更新する。key はファイル名に、label は本文に使う。",
@@ -25,67 +23,16 @@
         "url": "https://example.com/"
       },
       "ga4_property": "site",
-      "focus_note": "どのページに注目するかは、指示が無ければCLI AIが判断して決める。",
-      "chapters": [
-        {
-          "no": 1,
-          "key": "cover",
-          "title": "表紙",
-          "use": true
-        },
-        {
-          "no": 2,
-          "key": "toc",
-          "title": "目次",
-          "use": true
-        },
-        {
-          "no": 3,
-          "key": "exec_summary",
-          "title": "エグゼクティブサマリー",
-          "use": true,
-          "build_last": true
-        },
-        {
-          "no": 4,
-          "key": "ga4",
-          "title": "GA4解析",
-          "use": true
-        },
-        {
-          "no": 5,
-          "key": "search_console",
-          "title": "Search Console分析",
-          "use": true
-        },
-        {
-          "no": 6,
-          "key": "heuristic",
-          "title": "ヒューリスティック分析",
-          "use": true,
-          "clarity_pattern": "A"
-        },
-        {
-          "no": 7,
-          "key": "competitor",
-          "title": "競合比較",
-          "use": true
-        },
-        {
-          "no": 8,
-          "key": "proposal",
-          "title": "改善提案＋ワイヤーフレーム",
-          "use": true,
-          "count": 5,
-          "pages_each": 2
-        }
-      ]
+      "geometry_overrides": {
+        "_comment": "branding.json の geometry_cm からの差分。テンプレートの実測値を書く。",
+        "summary_top": 16.6,
+        "note_top": 17.72
+      }
     },
     {
       "key": "ad_lp",
       "name": "広告LPレポート",
       "merged": true,
-      "_merged_note": "複数LPを1ファイルに統合し、同一指標で横並び比較する場合に true。",
       "targets": [
         {
           "key": "lp1",
@@ -99,81 +46,28 @@
           "url": "https://lp.example.com",
           "ga4_property": "lp"
         }
-      ],
-      "page_estimate": 40,
-      "chapters": [
-        {
-          "no": 1,
-          "key": "compare",
-          "title": "LP横並び比較",
-          "use": true,
-          "first": true,
-          "metrics": [
-            "KPI",
-            "推移",
-            "デバイス",
-            "流入",
-            "CV",
-            "フォーム遷移元"
-          ]
-        },
-        {
-          "no": 2,
-          "key": "lp_detail",
-          "title": "LP別の詳細",
-          "use": true
-        },
-        {
-          "no": 3,
-          "key": "heuristic",
-          "title": "ヒューリスティック＋ヒートマップ",
-          "use": true
-        }
       ]
     }
   ],
-  "spec_documents": {
-    "site": "docs/レポート設計スペック_サイト全体.md",
-    "ad_lp": "docs/レポート設計スペック_LP.md"
-  },
   "competitor": {
-    "_comment": "競合比較章のルール。考え方は consultants/04-customer-search-competitor/COMPETITOR_SELECTION.md を参照。",
+    "_comment": "案件で決めるのはこの3つだけ。社数・枚数・キャプチャ方針などは既定にある。",
     "selection_mode": "core_plus_rotating",
-    "_selection_mode_options": {
-      "rotating": "毎月、その月の改善テーマに合わせて選び直す",
-      "fixed": "前月と同じ競合を継続する",
-      "core_plus_rotating": "固定コア＋入れ替え枠（推奨）"
-    },
-    "_ask_at_start": "レポート生成の開始時に、上記3つのどれで進めるかを利用者に尋ねる。",
-    "count": {
-      "min": 3,
-      "max": 12,
-      "recommended": 9
-    },
-    "pages_per_competitor": 1,
-    "_pages_reason": "枚数を削るときは社数ではなく1社あたりを削る。12社×1枚と4社×3枚は同じ12枚だが、前者だけが「ほぼ全社が持っている」と言える。",
     "categories": {
       "list": [
         "（カテゴリA）",
         "（カテゴリB）",
         "（カテゴリC）"
-      ],
-      "per_category_min": 3
+      ]
     },
     "core": {
       "companies": [
         "（毎月固定の競合1）",
         "（毎月固定の競合2）"
       ]
-    },
-    "capture_policy": {
-      "mode": "diff",
-      "full_recapture_months": 6,
-      "record_capture_date": true
-    },
-    "max_captures": 40,
-    "unsuitable_competitor_policy": "指定された競合から改善提案を引き出しにくい場合は、理由を添えて代替案を提示する。",
-    "history_file": "_config/competitor_history.json",
-    "novelty_rule": "前月と同じ競合を選んだ月は、履歴から前回の切り口を提示し、今月は何を変えて見るかを明記する。"
+    }
+  },
+  "spec_documents": {
+    "site": "docs/レポート設計スペック_サイト全体.md",
+    "ad_lp": "docs/レポート設計スペック_LP.md"
   }
 }

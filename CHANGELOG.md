@@ -14,3 +14,7 @@
 - JOB 07の `README.md`・`JOB.md`・`AGENTS.md`・`CLAUDE.md` にレポート生成の手順と体裁ルール（本文の最小サイズ、収まらないときは文章を短くする）を追記。
 - JOB 04に `COMPETITOR_SELECTION.md` を追加。競合の社数・カテゴリー・選び方・キャプチャの差分取得・履歴による新規性の担保・コスト上限の判断基準を明文化。枚数を削るときは社数ではなく1社あたりを削る、という基準を中心に据えた。
 - JOB 07の `config.example` に `competitor` 設定と `competitor_history.json` を追加。
+- JOB 07に `scripts/site_report_kit.py` を追加。ページの型6種（表2列／KPI＋グラフ／箱／キャプチャ左右／ヒートマップ／導線の図解）と、競合章の一括生成・用語集の自動分割をまとめた。
+- JOB 07に `defaults/` を追加。章立て・体裁ルール・競合の方法論・ページ座標を既定値として公開側に置き、`_config/` は上書きだけを持つ形にした。`_config/` は納品後に提供者が直せないため、汎用側に寄せておくと改善を全利用者へ一斉に届けられる。
+- JOB 07に `TEMPLATE_POLICY.md` を追加。テンプレートの有無と用紙比率を生成前に確定させる手順と確認文面。あわせて `scripts/inspect_template.py`（テンプレート解析）と `scripts/make_default_templates.py`（16:9 / 4:3 の既定雛形）を追加。
+- `.gitignore` に pptx / xlsx / テンプレートフォルダの除外を追加。クライアント提供のテンプレートが公開リポジトリへ混入しないようにした。

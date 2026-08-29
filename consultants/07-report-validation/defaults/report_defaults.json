@@ -1,0 +1,185 @@
+{
+  "_comment": "レポート生成の既定値。クライアント固有の値は含まない。_config/reports.json に同じキーがあれば、そちらが優先される。",
+  "output_dir": "_output",
+  "naming": "{report_name}_{site_key}_{period}_v{version}.pptx",
+  "chapter_templates": {
+    "_comment": "章立ての既定。案件ごとに増減する場合は _config 側で上書きする。",
+    "site": [
+      {
+        "no": 1,
+        "key": "cover",
+        "title": "表紙",
+        "use": true
+      },
+      {
+        "no": 2,
+        "key": "toc",
+        "title": "目次",
+        "use": true
+      },
+      {
+        "no": 3,
+        "key": "exec_summary",
+        "title": "エグゼクティブサマリー",
+        "use": true,
+        "build_last": true
+      },
+      {
+        "no": 4,
+        "key": "ga4",
+        "title": "GA4解析",
+        "use": true
+      },
+      {
+        "no": 5,
+        "key": "search_console",
+        "title": "Search Console分析",
+        "use": true
+      },
+      {
+        "no": 6,
+        "key": "heuristic",
+        "title": "ヒューリスティック分析",
+        "use": true,
+        "clarity_pattern": "A"
+      },
+      {
+        "no": 7,
+        "key": "competitor",
+        "title": "競合比較",
+        "use": true
+      },
+      {
+        "no": 8,
+        "key": "proposal",
+        "title": "改善提案＋ワイヤーフレーム",
+        "use": true,
+        "count": 5,
+        "pages_each": 1
+      },
+      {
+        "no": 9,
+        "key": "glossary",
+        "title": "用語集",
+        "use": true
+      }
+    ],
+    "ad_lp": [
+      {
+        "no": 1,
+        "key": "compare",
+        "title": "LP横並び比較",
+        "use": true,
+        "first": true
+      },
+      {
+        "no": 2,
+        "key": "lp_detail",
+        "title": "LP別の詳細",
+        "use": true
+      },
+      {
+        "no": 3,
+        "key": "heuristic",
+        "title": "ヒューリスティック＋ヒートマップ",
+        "use": true
+      },
+      {
+        "no": 4,
+        "key": "glossary",
+        "title": "用語集",
+        "use": true
+      }
+    ]
+  },
+  "competitor": {
+    "_comment": "競合比較の方法論。考え方は consultants/04-customer-search-competitor/COMPETITOR_SELECTION.md を参照。案件で変えるのは selection_mode / categories.list / core.companies だけ。",
+    "selection_mode": "core_plus_rotating",
+    "_selection_mode_options": {
+      "rotating": "毎月、その月の改善テーマに合わせて選び直す",
+      "fixed": "前月と同じ競合を継続する",
+      "core_plus_rotating": "固定コア＋入れ替え枠（推奨）"
+    },
+    "_ask_at_start": "レポート生成の開始時に、上記3つのどれで進めるかを利用者に尋ねる。",
+    "count": {
+      "min": 3,
+      "max": 12,
+      "recommended": 9
+    },
+    "pages_per_competitor": 1,
+    "_pages_reason": "枚数を削るときは社数ではなく1社あたりを削る。12社×1枚と4社×3枚は同じ12枚だが、前者だけが「ほぼ全社が持っている」と言える。",
+    "categories": {
+      "per_category_min": 3
+    },
+    "capture_policy": {
+      "mode": "diff",
+      "full_recapture_months": 6,
+      "record_capture_date": true
+    },
+    "max_captures": 40,
+    "min_capture_width_cm": 5.0,
+    "_min_capture_width_reason": "これを下回ると何が写っているか読めない。自動では切りどころを判断できないため、警告を出して切り出しを促す。機械的に上部を切ると解説と食い違う。",
+    "unsuitable_competitor_policy": "指定された競合から改善提案を引き出しにくい場合は、理由を添えて代替案を提示する。",
+    "history_file": "_config/competitor_history.json",
+    "novelty_rule": "前月と同じ競合を選んだ月は、履歴から前回の切り口を提示し、今月は何を変えて見るかを明記する。"
+  },
+  "page_geometry": {
+    "_comment": "ページ型ごとの座標。4:3系（幅25〜27cm）を前提にした既定値。テンプレートの用紙比率が違う場合は _config 側で上書きする。",
+    "body_top": 2.2,
+    "two_col": {
+      "left_x": 1.15,
+      "left_w": 12.6,
+      "right_x": 14.0,
+      "right_w": 12.35
+    },
+    "kpi_cards": {
+      "y": 1.75,
+      "h": 2.3,
+      "w": 6.08,
+      "xs": [
+        1.15,
+        7.53,
+        13.9,
+        20.27
+      ]
+    },
+    "chart_with_side_box": {
+      "chart_x": 1.15,
+      "chart_y": 4.4,
+      "chart_w": 15.4,
+      "chart_h": 7.6,
+      "box_x": 16.9,
+      "box_w": 9.45
+    },
+    "three_col": {
+      "xs": [
+        1.15,
+        9.75,
+        18.35
+      ],
+      "w": 8.0
+    },
+    "capture_right": {
+      "_comment": "左に箱2段、右にキャプチャ（課題詳細・改善提案）",
+      "box_x": 1.15,
+      "box_w": 12.6,
+      "img_x": 14.1,
+      "img_w": 12.25,
+      "img_y": 2.2,
+      "caption_h": 0.9
+    },
+    "capture_left": {
+      "_comment": "左にキャプチャ、右に箱2段（競合比較）",
+      "img_x": 1.15,
+      "img_w": 11.6,
+      "img_y": 2.2,
+      "box_x": 13.1,
+      "box_w": 13.25,
+      "box_top1": 2.2,
+      "box_h1": 7.2,
+      "box_top2": 9.6,
+      "box_h2": 6.0,
+      "caption_h": 0.9
+    }
+  }
+}

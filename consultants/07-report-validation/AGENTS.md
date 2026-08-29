@@ -3,7 +3,9 @@
 - `JOB.md`、`CHECKLIST.md`、`人間チェックプロトコル.md` を読む。
 - レポート制作と最終チェックを別工程として扱う。
 - 課題ID、施策ID、根拠、数値出所を維持する。
-- 作図は `scripts/deck_kit.py` を使い、案件固有の値は `_config/` から読む。
+- 生成前に `TEMPLATE_POLICY.md` の確認を行う。
+- 作図は `scripts/deck_kit.py` と `scripts/site_report_kit.py` を使う。
+- 設定は `defaults/` と `_config/` を重ねて読む。汎用側に置けるものを `_config/` に書かない。
 - 本文が枠に収まらないときは、文字を縮めず文章を短くする。
 - 数値は暗算せず再計算する。
 - 全スライドを画像化して確認する。
