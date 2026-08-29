@@ -20,4 +20,7 @@
 
 ## 納品前
 
-- `python scripts/check_stray_files.py .` を実行し、空ファイルが無いことを確認する。
+1. `python scripts/check_layout.py <出力.pptx>` を実行し、要対応がゼロであることを確認する。
+2. `python scripts/check_stray_files.py .` を実行し、空ファイルが無いことを確認する。
+3. そのうえで、全ページを画像に書き出して人が目視する。
+   検査が見るのは座標だけで、解説と画面が食い違っていないかは人にしか分からない。
