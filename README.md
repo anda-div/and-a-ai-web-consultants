@@ -16,7 +16,7 @@ CodexとClaude Codeのどちらでも利用できます。7人全員を使う必
 | 04 | [顧客・検索・競合調査](consultants/04-customer-search-competitor/) | Search Console、競合URL、顧客情報 | 検索意図・競合比較・顧客仮説 |
 | 05 | [課題診断・優先順位](consultants/05-issue-prioritization/) | JOB 01〜04の所見 | 課題台帳・優先順位・着手順 |
 | 06 | [UX/UI改善設計](consultants/06-ux-ui-design/) | 優先課題、証拠、制約 | 改善案・ワイヤーフレーム仕様 |
-| 07 | [レポート・効果検証](consultants/07-report-validation/) | 全JOBの成果物、PPTX | レポート、QA、Before/After検証 |
+| 07 | [レポート・効果検証](consultants/07-report-validation/) | 全JOBの成果物、PPTXテンプレート | PPTXレポート生成、QA、Before/After検証 |
 
 ## 最短の使い方
 
