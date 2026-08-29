@@ -18,3 +18,5 @@
 - JOB 07に `defaults/` を追加。章立て・体裁ルール・競合の方法論・ページ座標を既定値として公開側に置き、`_config/` は上書きだけを持つ形にした。`_config/` は納品後に提供者が直せないため、汎用側に寄せておくと改善を全利用者へ一斉に届けられる。
 - JOB 07に `TEMPLATE_POLICY.md` を追加。テンプレートの有無と用紙比率を生成前に確定させる手順と確認文面。あわせて `scripts/inspect_template.py`（テンプレート解析）と `scripts/make_default_templates.py`（16:9 / 4:3 の既定雛形）を追加。
 - `.gitignore` に pptx / xlsx / テンプレートフォルダの除外を追加。クライアント提供のテンプレートが公開リポジトリへ混入しないようにした。
+- JOB 07の `site_report_kit.py` に `two_col_tables(fill=True)` と `kpi_and_chart(chart_h=...)` を追加。行数の少ない表やグラフでページ下半分が空くのを防ぐ。あわせて「ページの下半分を空けない」ルールを README・AGENTS・CLAUDE に明文化した。
+- JOB 07に `scripts/check_stray_files.py` を追加。複数行のコードをシェル経由で渡したときに `>` がリダイレクトと解釈されて生まれる0バイトのファイルを検出する。ルート `AGENTS.md`・`CLAUDE.md` に「複数行のコードをシェルの引数として渡さない」を追記。

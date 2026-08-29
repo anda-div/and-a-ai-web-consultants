@@ -89,11 +89,15 @@ def build_site_kit(K, cfg, *, report_key: str = "site"):
     def two_col_tables(title, sub, left, right=None, insight=None,
                        summ=None, note=None, table_top=None,
                        colw_left=None, colw_right=None, rowh=0.52,
-                       insight_head=None, fs=8.5):
+                       insight_head=None, fs=8.5, fill=False):
         """表を左右に並べ、その下に解釈の箱を全幅で置く。
 
         right を省くと左の表だけを置く。
         insight は (見出し, lines) か lines。箱の高さは内容から自動決定する。
+
+        fill=True … 解釈の箱を要約枠の直前まで伸ばす。行数の少ない表で
+        ページ下半分が空くのを防ぐ。伸ばすぶんは中身で埋めること
+        （空の箱を大きくしても読み手には何も伝わらない）。
         """
         s = K.content(title, sub)
         top = BODY_TOP if table_top is None else table_top
@@ -108,16 +112,23 @@ def build_site_kit(K, cfg, *, report_key: str = "site"):
             bottom = max(bottom, top + rowh * len(right))
         if insight:
             head, lines = insight if isinstance(insight, tuple) else (insight_head, insight)
-            K.box(s, LEFT, bottom + 0.45, WIDTH, None, head, lines, pad="mid")
+            iy = bottom + 0.45
+            ih = (SUMM_TOP - 0.35 - iy) if fill else None
+            K.box(s, LEFT, iy, WIDTH, ih, head, lines, pad="mid",
+                  anchor=MSO_ANCHOR.TOP if fill else None)
         return _finish(s, summ, note)
 
     # ---------------------------------------------------------------- 型B
     def kpi_and_chart(title, sub, cards, chart_kind, cats, series,
-                      side=None, summ=None, note=None, legend=True, fs=8):
+                      side=None, summ=None, note=None, legend=True, fs=8,
+                      chart_h=None):
         """上にKPIカード、下にグラフ＋右に解釈の箱。
 
         cards は [(見出し, [(本文行, 色, 太字), …]), …] を最大4件。
+        chart_h を渡すと、グラフと右の箱の高さをその値にする。既定より
+        大きくすると、ページ下半分の空きを埋められる。
         """
+        ch_h = CWB["chart_h"] if chart_h is None else chart_h
         s = K.content(title, sub)
         # カードの枚数は可変。既定座標は4枚ぶんなので、枚数に応じて幅を割り直す。
         n = len(cards)
@@ -131,11 +142,11 @@ def build_site_kit(K, cfg, *, report_key: str = "site"):
             K.box(s, xs[i], CARDS["y"], cw, CARDS["h"],
                   head, lines, anchor=MSO_ANCHOR.TOP)
         K.chart(s, chart_kind, CWB["chart_x"], CWB["chart_y"],
-                CWB["chart_w"], CWB["chart_h"], cats, series,
+                CWB["chart_w"], ch_h, cats, series,
                 legend=legend, fs=fs)
         if side:
             head, lines = side if isinstance(side, tuple) else (None, side)
-            K.box(s, CWB["box_x"], CWB["chart_y"], CWB["box_w"], CWB["chart_h"],
+            K.box(s, CWB["box_x"], CWB["chart_y"], CWB["box_w"], ch_h,
                   head, lines, anchor=MSO_ANCHOR.TOP)
         return _finish(s, summ, note)
 
