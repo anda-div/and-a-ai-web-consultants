@@ -1,0 +1,24 @@
+{
+  "_comment": "競合×切り口の履歴。同じ競合を再び取り上げる月に、前回と違う視点を選ぶために使う。実案件の値はコミットしない。",
+  "_columns": [
+    "period",
+    "focus",
+    "companies"
+  ],
+  "entries": [
+    {
+      "period": "2026-07",
+      "report": "サイト全体レポート",
+      "focus": "（その月の切り口。例：CV導線／商品の見せ方／購入後のサポート）",
+      "pages_per_competitor": 1,
+      "capture_date": "（キャプチャ取得日）",
+      "companies": [
+        {
+          "name": "（競合名）",
+          "category": "（カテゴリ）",
+          "good_point": "（抽出したグッドポイント）"
+        }
+      ]
+    }
+  ]
+}

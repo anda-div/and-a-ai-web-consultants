@@ -12,3 +12,5 @@
 - JOB 07に `scripts/deck_kit.py` を追加。PowerPointレポートの作図部品（ページの型・箱・表・グラフ・要約・注記・ヒートマップ配置・日本語の禁則処理）を、案件固有の値を持たない形でまとめた。
 - JOB 07に `scripts/report_config.py` と `config.example/` を追加。会社名・計測ID・URL・テンプレート・配色・座標・固有名詞をConfigへ分離し、公開リポジトリ側には値を置かない構成にした。
 - JOB 07の `README.md`・`JOB.md`・`AGENTS.md`・`CLAUDE.md` にレポート生成の手順と体裁ルール（本文の最小サイズ、収まらないときは文章を短くする）を追記。
+- JOB 04に `COMPETITOR_SELECTION.md` を追加。競合の社数・カテゴリー・選び方・キャプチャの差分取得・履歴による新規性の担保・コスト上限の判断基準を明文化。枚数を削るときは社数ではなく1社あたりを削る、という基準を中心に据えた。
+- JOB 07の `config.example` に `competitor` 設定と `competitor_history.json` を追加。

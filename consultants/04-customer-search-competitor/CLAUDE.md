@@ -2,6 +2,7 @@
 
 @README.md
 @JOB.md
+@COMPETITOR_SELECTION.md
 
 - 検索意図、顧客仮説、競合観測を混同しない。
 - 競合の模倣ではなく、自社の選択理由を強める材料を探す。
