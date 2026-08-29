@@ -1,0 +1,384 @@
+{
+  "_comment": "分析の切り口カタログ。毎月ここから、直近で使っていないものを選ぶ。新しさはひらめきではなくローテーションが生む。",
+  "_how_to_use": [
+    "1. angles_history.json を見て、直近 cooldown_months 以内に使った切り口を除く。",
+    "2. 残りから、今月のデータで成立するもの（needs が揃っているもの）を候補にする。",
+    "3. 候補から3本ほどを選び、レポートの章立てに落とす。",
+    "4. 使った切り口は履歴に記録する。",
+    "カタログに無い切り口を思いついたら、ここへ追加すること。それが次の月の資産になる。"
+  ],
+  "cooldown_months": 3,
+  "_field_note": {
+    "key": "履歴に記録する識別子",
+    "name": "レポート上での呼び名",
+    "question": "この切り口が答える問い。ここが具体的でないと、所見がぼやける",
+    "needs": "必要なデータ。揃っていない月はその切り口を選べない",
+    "typical": "よく出てくる所見の型。これをそのまま書かず、今月の数字で確かめること",
+    "leads_to": "この切り口から生まれやすい提案の方向"
+  },
+  "angles": [
+    {
+      "key": "traffic_channel",
+      "name": "流入チャネルの構成",
+      "category": "集客",
+      "question": "どの入口が量を支えているか。止まったら困る入口はどれか",
+      "needs": [
+        "ga4.channel",
+        "ga4.source"
+      ],
+      "typical": "特定の1経路に依存していると、その経路が止まった月に全体が落ちる",
+      "leads_to": "依存の分散、弱い経路の強化"
+    },
+    {
+      "key": "traffic_new_vs_return",
+      "name": "新規と再訪の違い",
+      "category": "集客",
+      "question": "初めて来た人と再訪の人で、見るページと成果率がどう違うか",
+      "needs": [
+        "ga4.user_type"
+      ],
+      "typical": "再訪のほうが成果率が高いのに、再訪を増やす仕掛けが無い",
+      "leads_to": "再訪導線、メール・LINE、ブックマーク動機の設計"
+    },
+    {
+      "key": "traffic_referral_quality",
+      "name": "参照元ごとの質の差",
+      "category": "集客",
+      "question": "同じ1セッションでも、どこから来た人が成果に近いか",
+      "needs": [
+        "ga4.source",
+        "ga4.conversion_by_source"
+      ],
+      "typical": "量が多い経路と、質が高い経路が一致していない",
+      "leads_to": "出稿・掲載先の配分見直し"
+    },
+    {
+      "key": "traffic_paid_vs_organic",
+      "name": "広告と自然流入の関係",
+      "category": "集客",
+      "question": "広告を止めたら何が残るか。広告が自然流入を押し上げているか",
+      "needs": [
+        "ga4.channel",
+        "ga4.trend"
+      ],
+      "typical": "広告が全体の何割かを支えており、止めると成果も同率で落ちる",
+      "leads_to": "中期の自然流入強化、指名検索の育成"
+    },
+    {
+      "key": "landing_distribution",
+      "name": "着地ページの分散",
+      "category": "回遊",
+      "question": "どこに着地しているか。着地後の行き先は用意されているか",
+      "needs": [
+        "ga4.landing_page"
+      ],
+      "typical": "TOPに着地が集中し、目的別の分岐が無いまま各自に任されている",
+      "leads_to": "目的別の入口、着地直後の分岐"
+    },
+    {
+      "key": "page_transition",
+      "name": "ページ間の遷移",
+      "category": "回遊",
+      "question": "実際にはどの順で読まれているか。想定した導線と一致しているか",
+      "needs": [
+        "ga4.page_path"
+      ],
+      "typical": "設計した導線ではなく、検索や戻るボタンで移動している",
+      "leads_to": "実際の動きに合わせた導線の再配置"
+    },
+    {
+      "key": "exit_pages",
+      "name": "離脱ページ",
+      "category": "回遊",
+      "question": "どのページで見るのをやめているか。そこに次の行き先があるか",
+      "needs": [
+        "ga4.exit_rate"
+      ],
+      "typical": "読み終えた満足での離脱と、行き先が無い離脱が混ざっている",
+      "leads_to": "各ページの末尾に次の一歩を置く"
+    },
+    {
+      "key": "engagement_depth",
+      "name": "読まれ方の深さ",
+      "category": "回遊",
+      "question": "滞在時間とスクロール到達は、ページの長さに見合っているか",
+      "needs": [
+        "ga4.engagement_time",
+        "clarity.scroll"
+      ],
+      "typical": "長いページの後半が読まれておらず、重要な情報が下にある",
+      "leads_to": "情報の並べ替え、要点の前出し"
+    },
+    {
+      "key": "device_gap",
+      "name": "PCとスマートフォンの差",
+      "category": "回遊",
+      "question": "同じページでも、デバイスによって成果率がどう違うか",
+      "needs": [
+        "ga4.device"
+      ],
+      "typical": "スマートフォンの比率が高いのに、設計がPC前提のまま",
+      "leads_to": "スマートフォン優先の再設計"
+    },
+    {
+      "key": "form_funnel",
+      "name": "フォームの段階別離脱",
+      "category": "転換",
+      "question": "到達・開始・送信のどこで落ちているか",
+      "needs": [
+        "ga4.form_events"
+      ],
+      "typical": "入力を始める前に落ちている＝書ける状態になっていない",
+      "leads_to": "項目の見直し、書き方の例示、送信導線の是正"
+    },
+    {
+      "key": "form_field_friction",
+      "name": "フォーム項目ごとの負担",
+      "category": "転換",
+      "question": "どの項目で手が止まっているか。必須の理由は伝わっているか",
+      "needs": [
+        "clarity.click",
+        "form.structure"
+      ],
+      "typical": "電話番号など、抵抗の大きい項目が必須になっている",
+      "leads_to": "必須の絞り込み、理由の明示、選択式への変更"
+    },
+    {
+      "key": "cta_placement",
+      "name": "CTAの置き場所",
+      "category": "転換",
+      "question": "行動したくなった位置に、行き先があるか",
+      "needs": [
+        "clarity.click",
+        "page.structure"
+      ],
+      "typical": "CTAが本文下部にしか無く、途中で興味を持った人が移動できない",
+      "leads_to": "追従CTA、区切りごとのCTA"
+    },
+    {
+      "key": "ec_funnel",
+      "name": "ECの購入ファネル",
+      "category": "転換",
+      "question": "閲覧・カート・購入のどこで細くなっているか",
+      "needs": [
+        "ga4.ecommerce"
+      ],
+      "typical": "閲覧から購入への転換が極端に細く、選べていない",
+      "leads_to": "在庫表示、価格の明確化、比較の支援"
+    },
+    {
+      "key": "price_transparency",
+      "name": "価格情報のたどり着きやすさ",
+      "category": "転換",
+      "question": "検討中に最も知りたい価格が、何回の操作で分かるか",
+      "needs": [
+        "page.structure",
+        "competitor.capture"
+      ],
+      "typical": "価格や最低保証が規約や下部に埋もれている",
+      "leads_to": "価格帯の前出し、条件の要約"
+    },
+    {
+      "key": "trust_signals",
+      "name": "安心材料の配置",
+      "category": "転換",
+      "question": "不安が生まれる位置に、それを打ち消す材料があるか",
+      "needs": [
+        "page.structure"
+      ],
+      "typical": "実績やレビューはあるが、判断する場所から離れている",
+      "leads_to": "フォーム直前への実績配置、レビューの構造化"
+    },
+    {
+      "key": "search_intent",
+      "name": "検索クエリの意図",
+      "category": "検索",
+      "question": "どんな言葉で探されているか。その意図に応えるページがあるか",
+      "needs": [
+        "search_console.query"
+      ],
+      "typical": "指名検索で取れているが、用途やシーンの言葉では取れていない",
+      "leads_to": "意図別のページ、タイトルと説明文の見直し"
+    },
+    {
+      "key": "search_impression_gap",
+      "name": "表示はあるが押されていない領域",
+      "category": "検索",
+      "question": "表示回数の割にクリックされていないのはどのページか",
+      "needs": [
+        "search_console.page"
+      ],
+      "typical": "表示は多いがCTRが低い＝タイトルと説明文が意図に合っていない",
+      "leads_to": "タイトル・説明文の書き換え"
+    },
+    {
+      "key": "search_rank_band",
+      "name": "掲載順位の帯ごとの機会",
+      "category": "検索",
+      "question": "あと一歩で1ページ目に入る言葉はどれか",
+      "needs": [
+        "search_console.query"
+      ],
+      "typical": "11〜20位に、伸ばせば効く言葉がまとまっている",
+      "leads_to": "対象ページの加筆、内部リンクの追加"
+    },
+    {
+      "key": "search_brand_ratio",
+      "name": "指名検索の比率",
+      "category": "検索",
+      "question": "社名を知っている人だけで成り立っていないか",
+      "needs": [
+        "search_console.query"
+      ],
+      "typical": "クリックの大半が指名検索で、新規の入口が細い",
+      "leads_to": "一般語での接点づくり"
+    },
+    {
+      "key": "competitor_crosscut",
+      "name": "競合の横断共通点",
+      "category": "競合",
+      "question": "業態が違っても共通して持っている装備は何か",
+      "needs": [
+        "competitor.capture"
+      ],
+      "typical": "ほぼ全社が持っているのに自社に無い＝業種の基本装備の欠落",
+      "leads_to": "基本装備の実装"
+    },
+    {
+      "key": "competitor_whitespace",
+      "name": "競合の空白地帯",
+      "category": "競合",
+      "question": "誰も実装していない領域はどこか",
+      "needs": [
+        "competitor.capture"
+      ],
+      "typical": "全社が未実装の領域があり、そこは差別化の余地になる",
+      "leads_to": "先行実装による差別化"
+    },
+    {
+      "key": "competitor_entry_design",
+      "name": "競合の着地直後の設計",
+      "category": "競合",
+      "question": "他社は着地した人を、何秒で次の行動へ進ませているか",
+      "needs": [
+        "competitor.capture"
+      ],
+      "typical": "着地直後にフォームや分岐を置く型が定着している",
+      "leads_to": "ファーストビューの再設計"
+    },
+    {
+      "key": "competitor_own_strength",
+      "name": "自社だけが持っているもの",
+      "category": "競合",
+      "question": "競合が持っておらず自社にあるものは何か。それは維持されているか",
+      "needs": [
+        "competitor.capture"
+      ],
+      "typical": "強みが既にあるのに、社内で認識されておらず改修で失われかける",
+      "leads_to": "強みの維持と強化を明文化する"
+    },
+    {
+      "key": "seasonality",
+      "name": "季節性と前年同月",
+      "category": "時間",
+      "question": "今月の増減は季節によるものか、施策によるものか",
+      "needs": [
+        "ga4.trend_12m"
+      ],
+      "typical": "前月比では分からない山谷が、前年同月比で説明できる",
+      "leads_to": "繁忙期に向けた前倒しの準備"
+    },
+    {
+      "key": "day_hour",
+      "name": "曜日と時間帯",
+      "category": "時間",
+      "question": "いつ見られ、いつ問い合わせが起きているか",
+      "needs": [
+        "ga4.day_hour"
+      ],
+      "typical": "閲覧の山と問い合わせの山がずれている",
+      "leads_to": "受付時間の表示、営業時間外の受け皿"
+    },
+    {
+      "key": "effect_verification",
+      "name": "前回提案の効果検証",
+      "category": "時間",
+      "question": "実装した施策は、狙った指標を動かしたか",
+      "needs": [
+        "ledger.implemented",
+        "ga4.before_after"
+      ],
+      "typical": "効いた／効かなかったのどちらでも、次の問いが生まれる",
+      "leads_to": "同じ型の横展開、または原因の掘り下げ"
+    },
+    {
+      "key": "member_behavior",
+      "name": "会員と非会員の違い",
+      "category": "会員",
+      "question": "会員登録した人は、その後どう動いているか",
+      "needs": [
+        "ga4.user_id",
+        "ga4.member_segment"
+      ],
+      "typical": "会員のほうが購入率は高いが、登録から初回購入までが遠い",
+      "leads_to": "登録直後の導線、初回の後押し"
+    },
+    {
+      "key": "visit_count_band",
+      "name": "訪問回数の帯",
+      "category": "会員",
+      "question": "何回目の訪問で成果が出ているか",
+      "needs": [
+        "ga4.visit_count"
+      ],
+      "typical": "初回では決まらず、2〜3回目で決まっている",
+      "leads_to": "再訪を促す仕掛け、検討期間に合わせた情報提供"
+    },
+    {
+      "key": "product_category",
+      "name": "商品カテゴリー別の売れ方",
+      "category": "商品",
+      "question": "何が売れていて、何が見られているのに売れていないか",
+      "needs": [
+        "ga4.item_category"
+      ],
+      "typical": "閲覧は多いのに購入に至らないカテゴリーがある",
+      "leads_to": "カテゴリーごとの見せ方・価格表示の調整"
+    },
+    {
+      "key": "content_to_service",
+      "name": "読み物からサービスへの導線",
+      "category": "商品",
+      "question": "コラムや事例を読んだ人は、サービスへ進んでいるか",
+      "needs": [
+        "ga4.page_path",
+        "ga4.page_group"
+      ],
+      "typical": "読み物としては見つかっているが、サービスへの導線が無い",
+      "leads_to": "記事末の導線、関連サービスの提示"
+    },
+    {
+      "key": "copy_consistency",
+      "name": "表記の正確さと統一",
+      "category": "記述",
+      "question": "画面に出ている文字に、誤りや不統一は無いか",
+      "needs": [
+        "page.capture"
+      ],
+      "typical": "綴りの誤り、旧ブランド表記、年号の古い著作権表記が残っている",
+      "leads_to": "文言のみで直せる修正。公開前なら差し替えコストがかからない"
+    },
+    {
+      "key": "measurement_integrity",
+      "name": "計測そのものの欠落",
+      "category": "計測",
+      "question": "見たい数値は、そもそも取れているか",
+      "needs": [
+        "ga4.events",
+        "gtm.container"
+      ],
+      "typical": "CVイベントが未発火で、真の獲得件数が分からないまま議論している",
+      "leads_to": "計測の実装。ここが埋まらないと他の提案の効果も測れない"
+    }
+  ]
+}
