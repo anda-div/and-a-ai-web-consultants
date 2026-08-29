@@ -37,9 +37,11 @@
 | `scripts/site_report_kit.py` | ページの型6種。`deck_kit` の上に載せる |
 | `scripts/inspect_template.py` | テンプレートを解析し、`branding.json` に書く値を出力 |
 | `scripts/make_default_templates.py` | 既定テンプレート（16:9 / 4:3）を生成 |
+| `scripts/ledger.py` | 提案台帳。過去の提案の照会・状態の更新 |
+| `scripts/build_briefing.py` | 月初ブリーフィングを作る（台帳＋切り口＋指標） |
 | `scripts/check_layout.py` | 生成したPPTXの体裁を測る（重なり・枠外・下の空き・画像） |
 | `scripts/check_stray_files.py` | 紛れ込んだ空ファイルを見つける（納品前チェック） |
-| `defaults/` | 汎用の既定値。章立て・体裁ルール・競合の方法論・ページ座標 |
+| `defaults/` | 汎用の既定値。章立て・体裁ルール・競合の方法論・ページ座標・切り口カタログ |
 | `config.example/` | Configのひな形（架空値）。`_config` としてコピーして使う |
 
 ### ページの型（`site_report_kit`）
@@ -56,6 +58,24 @@
 | F | `flow_diagram` | 箱と矢印で導線を図示（ファネルの離脱など） |
 
 `competitor_pages`（1社1枚で競合章を作る）と `glossary`（用語集の自動分割）も含みます。
+
+### 提案が枯渇しないようにする
+
+毎月同じサイトを見ていると「もう出すことが無い」という状態になります。
+発想力ではなく、**憶えていられない・角度が固定される・結果を確かめる前に次の月が来る**の3つが原因です。
+
+```bash
+python scripts/build_briefing.py 2026-07   # 月初に1回。白紙から考え始めない
+```
+
+| 節 | 誰が用意するか |
+|---|---|
+| 台帳の状況（未実装・却下）／効果を検証すべき提案／今月使える切り口／主要指標 | 機械 |
+| 提案候補10本 | AI（依頼文が同梱される） |
+| どれを載せるか、言い切り方、相手への配慮 | 人 |
+
+**「考え出す」から「選んで磨く」に変えるのが狙いです。** 丸投げではありません。
+詳しくは [PROPOSAL_LEDGER.md](PROPOSAL_LEDGER.md) を参照してください。
 
 ### 生成したら測る
 
