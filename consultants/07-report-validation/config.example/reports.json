@@ -135,5 +135,45 @@
   "spec_documents": {
     "site": "docs/レポート設計スペック_サイト全体.md",
     "ad_lp": "docs/レポート設計スペック_LP.md"
+  },
+  "competitor": {
+    "_comment": "競合比較章のルール。考え方は consultants/04-customer-search-competitor/COMPETITOR_SELECTION.md を参照。",
+    "selection_mode": "core_plus_rotating",
+    "_selection_mode_options": {
+      "rotating": "毎月、その月の改善テーマに合わせて選び直す",
+      "fixed": "前月と同じ競合を継続する",
+      "core_plus_rotating": "固定コア＋入れ替え枠（推奨）"
+    },
+    "_ask_at_start": "レポート生成の開始時に、上記3つのどれで進めるかを利用者に尋ねる。",
+    "count": {
+      "min": 3,
+      "max": 12,
+      "recommended": 9
+    },
+    "pages_per_competitor": 1,
+    "_pages_reason": "枚数を削るときは社数ではなく1社あたりを削る。12社×1枚と4社×3枚は同じ12枚だが、前者だけが「ほぼ全社が持っている」と言える。",
+    "categories": {
+      "list": [
+        "（カテゴリA）",
+        "（カテゴリB）",
+        "（カテゴリC）"
+      ],
+      "per_category_min": 3
+    },
+    "core": {
+      "companies": [
+        "（毎月固定の競合1）",
+        "（毎月固定の競合2）"
+      ]
+    },
+    "capture_policy": {
+      "mode": "diff",
+      "full_recapture_months": 6,
+      "record_capture_date": true
+    },
+    "max_captures": 40,
+    "unsuitable_competitor_policy": "指定された競合から改善提案を引き出しにくい場合は、理由を添えて代替案を提示する。",
+    "history_file": "_config/competitor_history.json",
+    "novelty_rule": "前月と同じ競合を選んだ月は、履歴から前回の切り口を提示し、今月は何を変えて見るかを明記する。"
   }
 }
