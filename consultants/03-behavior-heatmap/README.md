@@ -33,7 +33,7 @@ Microsoft Clarityのクリック・スクロール画像とページキャプチ
 |---|---|
 | [JOB.md](JOB.md) | 実行手順（画像台帳 → 観測 → 反証 → 引き渡し） |
 | [CLARITY_METRICS.md](CLARITY_METRICS.md) | ヒートマップを画像ではなく実数で取る。URLで状態を指定し、要素別クリック数とスクロール到達率を数値化する |
-| [CLARITY_CAPTURE.md](CLARITY_CAPTURE.md) | ヒートマップを位置ずれなくキャプチャする。熱とページ画像を同期させて分割撮影・結合する |
+| [CLARITY_CAPTURE.md](CLARITY_CAPTURE.md) | ヒートマップを位置ずれなくキャプチャする。熱とページ画像を同期させて分割撮影・結合する。1ページ4枚が約2分で揃う |
 
 ## セットアップ
 
@@ -42,10 +42,24 @@ python -m pip install -r requirements.txt
 python -m playwright install chromium
 ```
 
-Clarityヒートマップを直接取得する（初回のみサインイン）:
+初回のみサインインする（ブラウザが開く。閉じたら完了。キー入力は不要）:
 
 ```bash
 python scripts/clarity_heatmap_capture.py --login
+```
+
+1ページ分（PC・SP × クリック・スクロールの4枚）をまとめて撮る。**約2分・見守り不要**:
+
+```bash
+python scripts/clarity_capture_set.py \
+    --project <projectId> \
+    --page-url https://example.com/category/shoes/ \
+    --name shoes
+```
+
+1枚だけ撮り直す:
+
+```bash
 python scripts/clarity_heatmap_capture.py \
     --project <projectId> \
     --page-url https://example.com/category/shoes/ \
