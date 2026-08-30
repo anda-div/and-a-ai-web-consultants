@@ -24,5 +24,6 @@ jobs:
           python consultants/05-issue-prioritization/tests/test_prioritize_findings.py
           python consultants/06-ux-ui-design/tests/test_build_action_specs.py
           python consultants/07-report-validation/tests/test_compare_periods.py
+          python consultants/07-report-validation/tests/test_check_layout.py
       - name: Public safety scan
         run: python tools/public_scan.py .
