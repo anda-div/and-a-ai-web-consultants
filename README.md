@@ -57,6 +57,11 @@ python shared/scripts/tls_env.py
 
 対処と、お客様が自走される場合の書き方は [shared/TLS_INSPECTION.md](shared/TLS_INSPECTION.md) にあります。
 
+GA4をPCから直接取得する構成そのもの（認証・GASとの一致確認・つまずきどころ）は
+[shared/GA4_LOCAL_FETCH.md](shared/GA4_LOCAL_FETCH.md) にまとめています。
+`gcloud` 内蔵のクライアントIDでは `analytics.readonly` が通らなくなっているため、
+**自前のOAuthクライアントIDを1つ作る必要があります**。
+
 ## データと機密情報
 
 - 実クライアントのデータ、名称、URL、ID、認証情報をGitへコミットしないでください。
