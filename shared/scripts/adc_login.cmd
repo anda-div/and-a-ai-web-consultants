@@ -21,7 +21,7 @@ rem
 rem Usage:  shared\scripts\adc_login.cmd [quota-project-id] [client-json-path]
 rem ---------------------------------------------------------------------------
 setlocal
-set "SCOPES=https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/cloud-platform"
+set "SCOPES=https://www.googleapis.com/auth/analytics.readonly,https://www.googleapis.com/auth/webmasters.readonly,https://www.googleapis.com/auth/cloud-platform"
 
 set "CLIENT=%~2"
 if "%CLIENT%"=="" set "CLIENT=%USERPROFILE%\.and-a\oauth_client.json"

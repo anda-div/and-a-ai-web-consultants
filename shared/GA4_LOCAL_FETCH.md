@@ -126,7 +126,14 @@ google.api_core.exceptions.DeadlineExceeded: 504 Deadline Exceeded
 - 待ち時間は 5秒 → 10秒 → 20秒 と伸ばす
 - 問い合わせ自体のタイムアウトも延ばす（既定は短い）
 
-## 5. セキュリティソフトのHTTPS検査
+## 5. Search Console も同じ仕組みで自動化できる
+
+認証は共通なので、スコープを1つ足して再ログインするだけで済む。
+**GA4を先に入れてからSearch Consoleを足す場合は、必ず再ログインが要る**
+（`Insufficient Permission` で止まる）。詳細は
+[SEARCH_CONSOLE_LOCAL_FETCH.md](SEARCH_CONSOLE_LOCAL_FETCH.md)。
+
+## 6. セキュリティソフトのHTTPS検査
 
 別の落とし穴があり、`shared/TLS_INSPECTION.md` に分けて書いてある。
 **着手前に一度切り分けておく**こと。
@@ -135,7 +142,7 @@ google.api_core.exceptions.DeadlineExceeded: 504 Deadline Exceeded
 python shared/scripts/tls_env.py
 ```
 
-## 6. 案件での扱い
+## 7. 案件での扱い
 
 ### 切り替えの判断
 
