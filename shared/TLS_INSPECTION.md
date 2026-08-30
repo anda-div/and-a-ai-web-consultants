@@ -102,9 +102,10 @@ tls_env.enable()
 
 gcloud は `shared/scripts/gcloud.cmd` を経由して呼ぶ。素の gcloud は使わない。
 
+認証の初期設定は、長いURLを手で打たずに済むよう1コマンドにまとめてある。
+
 ```
-shared\scripts\gcloud.cmd auth application-default login --scopes=...
-shared\scripts\gcloud.cmd auth application-default set-quota-project <プロジェクトID>
+shared\scripts\adc_login.cmd <プロジェクトID>
 ```
 
 ラッパーがしていることは3つだけで、gcloud本体にもセキュリティソフトにも
@@ -121,7 +122,34 @@ shared\scripts\gcloud.cmd auth application-default set-quota-project <プロジ�
 **案件フォルダの中には置かない。** 束の中身はそのPCが信頼している証明書なので、
 別のPCへ同期されると意味を失う（クラウド同期しているフォルダに置くと起きる）。
 
-## 5. 案件での扱い
+## 5. 設定作業でつまずいた点
+
+対処そのものより、ここで時間を取られた。同じ環境なら同じ順で起きる。
+
+### 長いURLをコマンドラインに書くと壊れる
+
+スコープ指定は `https://...analytics.readonly,https://...cloud-platform` と長い。
+シェルがこれを分割し、`'loud-platform"' は認識されていません` のような
+意味の分からないエラーになる。**バッチに書いて1語で呼ぶ**（`adc_login.cmd`）。
+お客様に手順を渡す場合も、この形にしておく。
+
+### `cmd /c "..."` が対話モードで起動してしまう
+
+Git Bash から呼ぶと、MSYS が `/c` を Windows のパスへ書き換えるため、
+cmd はオプションを受け取れず対話モードで立ち上がる。
+`.cmd` は **`cmd /c` を挟まず直接実行する**。
+
+### カレントフォルダのごみファイルがツール検出を壊す
+
+Windows の `where python` は**カレントフォルダを最初に見る**。
+シェルのリダイレクト事故で `python` という名前のファイルができていると、
+それを Python 本体だと誤認し、gcloud が
+`you must have Python installed and on your PATH` で止まる。
+
+- 候補は使う前に「`.exe` であり、実際に起動する」ことを確かめる（`gcloud.cmd` はそうしている）
+- `check_stray_files.py` はコマンド名と同じ名前のファイルも報告する（**中身があっても**）
+
+## 6. 案件での扱い
 
 ### 見積り・スケジュール
 
