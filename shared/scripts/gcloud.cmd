@@ -13,15 +13,28 @@ rem
 rem Setup:  pip install truststore
 rem Why:    see shared/TLS_INSPECTION.md (Japanese)
 rem ---------------------------------------------------------------------------
-setlocal
+setlocal enabledelayedexpansion
 
+if defined CLOUDSDK_PYTHON call :verify "%CLOUDSDK_PYTHON%" || set "CLOUDSDK_PYTHON="
+
+rem The py launcher knows the real installs and ignores stray files.
 if not defined CLOUDSDK_PYTHON (
-  for /f "delims=" %%i in ('where python 2^>nul') do (
-    if not defined CLOUDSDK_PYTHON set "CLOUDSDK_PYTHON=%%i"
+  for /f "delims=" %%i in ('py -c "import sys; sys.stdout.write(sys.executable)" 2^>nul') do (
+    call :verify "%%i" && set "CLOUDSDK_PYTHON=%%i"
   )
 )
+
+rem `where` also matches a file named `python` sitting in the current folder,
+rem and the Microsoft Store stub, so every candidate is verified before use.
 if not defined CLOUDSDK_PYTHON (
-  echo [gcloud.cmd] Python not found on PATH. Set CLOUDSDK_PYTHON to python.exe.
+  for /f "delims=" %%i in ('where python 2^>nul') do (
+    if not defined CLOUDSDK_PYTHON call :verify "%%i" && set "CLOUDSDK_PYTHON=%%i"
+  )
+)
+
+if not defined CLOUDSDK_PYTHON (
+  echo [gcloud.cmd] No usable Python found. Install Python, or set CLOUDSDK_PYTHON
+  echo              to the full path of python.exe.
   exit /b 1
 )
 
@@ -37,3 +50,12 @@ if not exist "%GCLOUD_CMD%" (
 )
 
 call "%GCLOUD_CMD%" %*
+exit /b %errorlevel%
+
+rem --- Succeeds only if the candidate is an executable that actually runs. ---
+:verify
+if "%~x1"=="" exit /b 1
+if /i not "%~x1"==".exe" exit /b 1
+if not exist "%~1" exit /b 1
+"%~1" -c "pass" >nul 2>&1
+exit /b %errorlevel%
