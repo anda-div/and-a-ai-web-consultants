@@ -45,6 +45,18 @@ Codexはルートの `AGENTS.md`、Claude Codeはルートの `CLAUDE.md` を読
 
 各JOBは独立して利用できます。前段のJOBを使わない場合は、必要な情報を利用者が直接入力してください。
 
+## APIをPCから直接呼ぶ場合
+
+GA4などのAPIをこのPCから直接呼ぶ構成にすると、ブラウザでは何も起きないのに
+PythonとgcloudだけがTLSの証明書エラーで止まることがあります。セキュリティソフトが
+HTTPSを検査しているPCで起きます。着手前に一度だけ切り分けてください。
+
+```bash
+python shared/scripts/tls_env.py
+```
+
+対処と、お客様が自走される場合の書き方は [shared/TLS_INSPECTION.md](shared/TLS_INSPECTION.md) にあります。
+
 ## データと機密情報
 
 - 実クライアントのデータ、名称、URL、ID、認証情報をGitへコミットしないでください。
