@@ -8,7 +8,8 @@
 
 検査するもの
 
-    重なり      内容どうしが重なっていないか
+    重なり      内容どうしの辺が交差していないか
+                （完全に内側に収まっているものは意図した重ね置きとみなす）
     枠外        図形が用紙からはみ出していないか
     下の空き    内容の下端と要約枠の間が空きすぎていないか
     画像のゆがみ 画像が元の縦横比のまま置かれているか
@@ -29,12 +30,21 @@ import argparse
 import os
 import re
 import sys
+import unicodedata as _ud
 import zipfile
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
+from pptx.enum.text import PP_ALIGN
 
 EMU_CM = 360000.0
+
+
+def text_width_cm(text: str, size_pt: float) -> float:
+    """文字列の見た目の幅（cm）。全角は1文字、半角は0.5文字ぶんとして数える。"""
+    cw = size_pt / 72 * 2.54
+    return sum(1.0 if _ud.east_asian_width(c) in "WF" else 0.5
+               for c in text) * cw
 
 # 内容として扱う図形（装飾の線や矢印は対象外）
 CONTENT_TYPES = {"autoShape", "pic", "graphicFrame", "tbl", "sp"}
@@ -47,9 +57,10 @@ def cm(v) -> float:
 class Shape:
     """検査に必要な情報だけを取り出した図形"""
 
-    def __init__(self, sh, slide_no: int):
+    def __init__(self, sh, slide_no: int, z: int = 0):
         self.raw = sh
         self.slide = slide_no
+        self.z = z          # 描画順。大きいほど上に載る
         self.x = cm(sh.left)
         self.y = cm(sh.top)
         self.w = cm(sh.width)
@@ -60,6 +71,55 @@ class Shape:
             self.text = sh.text_frame.text.strip()
         self.is_picture = self.tag == "pic"
         self.is_connector = self.tag == "cxnSp"
+        self.is_textbox = False
+        try:
+            self.is_textbox = sh.shape_type == MSO_SHAPE_TYPE.TEXT_BOX
+        except Exception:
+            pass
+        # テキストボックスは透明で、文字のあるところしか占めない。
+        # 塗りや枠線を持つ図形は枠のぶんだけ場所を占める。
+        self.tx, self.ty, self.tw, self.th = self.x, self.y, self.w, self.h
+        if self.text:
+            self._shrink_to_text(sh)
+            # 文字の占める範囲は控えておく（画像に隠れた判定で使う）
+            self.ex, self.ey, self.ew, self.eh = self.tx, self.ty, self.tw, self.th
+            if not self.is_textbox:
+                # 塗りや枠線を持つ図形は、枠のぶんだけ場所を占める
+                self.tx, self.ty, self.tw, self.th = self.x, self.y, self.w, self.h
+        else:
+            self.ex, self.ey, self.ew, self.eh = self.x, self.y, self.w, self.h
+
+    def _shrink_to_text(self, sh) -> None:
+        """枠を、実際に文字が占める範囲まで縮める。"""
+        usable = max(self.w - 0.2, 0.1)
+        lines = 0
+        widest = 0.0
+        height = 0.0
+        for par in sh.text_frame.paragraphs:
+            t = "".join(r.text for r in par.runs)
+            if not t.strip():
+                lines += 1
+                height += 0.35
+                continue
+            size = next((r.font.size.pt for r in par.runs if r.font.size), 11.0)
+            w = text_width_cm(t, size)
+            n = max(1, int(-(-w // usable)))
+            widest = max(widest, min(w, usable))
+            height += n * (size * 1.35 / 72 * 2.54)
+            lines += n
+        if not lines:
+            return
+        align = None
+        try:
+            align = sh.text_frame.paragraphs[0].alignment
+        except Exception:
+            pass
+        self.tw = min(self.w, widest + 0.25)
+        self.th = min(self.h, height + 0.15)
+        if align == PP_ALIGN.CENTER:
+            self.tx = self.x + (self.w - self.tw) / 2
+        elif align == PP_ALIGN.RIGHT:
+            self.tx = self.x + (self.w - self.tw)
 
     @property
     def right(self) -> float:
@@ -101,27 +161,34 @@ def collect(slide, slide_no: int) -> list[Shape]:
                     continue
             except (AttributeError, TypeError):
                 continue
-            out.append(Shape(sh, slide_no))
+            out.append(Shape(sh, slide_no, len(out)))
 
     walk(slide.shapes)
     return out
 
 
 def overlap_area(a: Shape, b: Shape) -> tuple[float, float, float]:
-    ow = min(a.right, b.right) - max(a.x, b.x)
-    oh = min(a.bottom, b.bottom) - max(a.y, b.y)
+    """重なりの面積・幅・高さ。テキストボックスは文字の占める範囲で見る。"""
+    ar, ab = a.tx + a.tw, a.ty + a.th
+    br, bb = b.tx + b.tw, b.ty + b.th
+    ow = min(ar, br) - max(a.tx, b.tx)
+    oh = min(ab, bb) - max(a.ty, b.ty)
     if ow <= 0 or oh <= 0:
         return 0.0, 0.0, 0.0
     return ow * oh, ow, oh
 
 
 def inside(inner: Shape, outer: Shape, tol: float = 0.05) -> bool:
-    """inner が画像 outer の内側に完全に収まっているか"""
-    if not outer.is_picture:
-        return False
-    return (inner.x >= outer.x - tol and inner.y >= outer.y - tol
-            and inner.right <= outer.right + tol
-            and inner.bottom <= outer.bottom + tol)
+    """inner が outer の内側に完全に収まっているか。
+
+    完全な内包は、ほぼ意図した重ね置きである。
+      ・見出し帯の上にラベルを置く
+      ・キャプチャの上に注記を置く（改善案のBefore/After）
+    事故として起きる重なりは、辺が交差する形になる。
+    """
+    return (inner.tx >= outer.tx - tol and inner.ty >= outer.ty - tol
+            and inner.tx + inner.tw <= outer.tx + outer.tw + tol
+            and inner.ty + inner.th <= outer.ty + outer.th + tol)
 
 
 def control_chars(path: str) -> list[tuple[int, str, str, str]]:
@@ -148,7 +215,8 @@ def control_chars(path: str) -> list[tuple[int, str, str, str]]:
 
 
 def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
-          summary_prefix: str, margin: float) -> tuple[list, list]:
+          summary_prefix: str, margin: float,
+          strict: bool = False) -> tuple[list, list]:
     prs = Presentation(path)
     SW, SH = cm(prs.slide_width), cm(prs.slide_height)
     major, minor = [], []
@@ -170,11 +238,26 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
                 # かすっているだけのものは数えない
                 if ow < 0.15 or oh < 0.15:
                     continue
-                # キャプチャの上に注記を重ねるのは意図した表現（改善案のBefore/Afterなど）。
-                # 画像の内側に完全に収まっているものは指摘しない。
-                if inside(a, b) or inside(b, a):
+                # 完全に内側に収まっているものは、意図した重ね置きとみなす
+                # （見出し帯の上のラベル、キャプチャの上の注記など）。
+                # 事故として起きる重なりは、辺が交差する形になる。
+                if not strict and (inside(a, b) or inside(b, a)):
                     continue
-                small = min(a.w * a.h, b.w * b.h)
+                # 画像は不透明で、上に載っている。下の装飾が隠れるのは
+                # 設計どおりで見た目の問題にならない。文字が隠れるときだけ見る。
+                if not strict and (a.is_picture != b.is_picture):
+                    pic, other = (a, b) if a.is_picture else (b, a)
+                    if other.z < pic.z:
+                        if not other.text:
+                            continue
+                        ow2 = min(other.ex + other.ew, pic.x + pic.w) - \
+                            max(other.ex, pic.x)
+                        oh2 = min(other.ey + other.eh, pic.y + pic.h) - \
+                            max(other.ey, pic.y)
+                        if ow2 <= 0.15 or oh2 <= 0.15:
+                            continue
+                        ow, oh = ow2, oh2
+                small = min(a.tw * a.th, b.tw * b.th)
                 if small <= 0 or area / small < 0.08:
                     continue
                 major.append((n, "重なり",
@@ -200,11 +283,23 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
             except Exception:
                 px = py = 0
             if px and py:
-                want, got = py / px, s.h / s.w
+                # 切り抜き（トリミング）を反映した縦横比と比べる。
+                # 右端を切り抜いた画像は、元の縦横比と配置が違って当然である。
+                cl = getattr(s.raw, "crop_left", 0) or 0
+                cr = getattr(s.raw, "crop_right", 0) or 0
+                ct = getattr(s.raw, "crop_top", 0) or 0
+                cb = getattr(s.raw, "crop_bottom", 0) or 0
+                ew = px * max(1e-6, 1 - cl - cr)
+                eh = py * max(1e-6, 1 - ct - cb)
+                want, got = eh / ew, s.h / s.w
                 if want and abs(want - got) / want > 0.02:
+                    crop = "（切り抜きあり）" if (cl or cr or ct or cb) else ""
                     major.append((n, "画像のゆがみ", s.label,
-                                  f"元 {want:.2f} → 配置 {got:.2f}"))
-            if s.w < min_img_w and not split_layout:
+                                  f"本来 {want:.2f} → 配置 {got:.2f}{crop}"))
+            # 幅が狭いだけでは足りない。小さなアイコンは狭くて当然である。
+            # 「縦に長いページ全体を1枚で貼ったため細くなった」ものだけを拾う。
+            tall = (s.h / s.w) >= 2.0
+            if s.w < min_img_w and tall and not split_layout:
                 bucket = major if s.w < min_img_w / 2 else minor
                 bucket.append((n, "細い画像", s.label,
                                f"幅 {s.w:.1f} cm（縦横比 {s.h / s.w:.1f}:1）。"
@@ -278,6 +373,9 @@ def main() -> int:
                          "どんな意図でも読めない）。注記帯とキャプションは対象外")
     ap.add_argument("--min-img-width", type=float, default=5.0,
                     help="画像の最小幅(cm)。既定 5.0")
+    ap.add_argument("--strict-overlap", action="store_true",
+                    help="完全に内側に収まっている重なりも指摘する"
+                         "（見出し帯の上のラベルなども拾うため誤検知が増える）")
     ap.add_argument("--margin", type=float, default=0.02,
                     help="枠外判定の許容量(cm)。既定 0.02")
     ap.add_argument("--summary-prefix", default="【このページの要約】",
@@ -292,7 +390,8 @@ def main() -> int:
             continue
         major, minor = check(p, max_gap=a.max_gap, min_pt=a.min_pt,
                              min_img_w=a.min_img_width,
-                             summary_prefix=a.summary_prefix, margin=a.margin)
+                             summary_prefix=a.summary_prefix, margin=a.margin,
+                             strict=a.strict_overlap)
         rc |= report(p, major, minor)
     return rc
 
