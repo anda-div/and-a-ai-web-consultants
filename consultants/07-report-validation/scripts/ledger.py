@@ -24,6 +24,7 @@
     python ledger.py --similar "追従CTA"     似た提案を探す
     python ledger.py --angle price_transparency  切り口で照会する（こちらが確実）
     python ledger.py --set P-2026-06-001 --status 実装済み --date 2026-07-15
+    python ledger.py --order-sheet          低コスト帯をまとめた発注依頼書
     python ledger.py --stats                集計
 """
 from __future__ import annotations
@@ -124,6 +125,7 @@ class Ledger:
             "evidence": kw.get("evidence", []),
             "effort": kw.get("effort", ""),
             "cost_band": kw.get("cost_band") or cost_band(kw.get("effort", "")),
+            "vendor": kw.get("vendor", ""),
             "vendor_brief": kw.get("vendor_brief", ""),
             "metric": kw.get("metric", ""),
             "metric_kind": kw.get("metric_kind", ""),
@@ -149,14 +151,29 @@ class Ledger:
         """まだ実装されていないもの。再提示の判断材料になる。"""
         return [i for i in self.items if i["status"] in ("提案中", "実装待ち", "保留")]
 
-    def low_cost(self) -> list[dict]:
+    def low_cost(self, vendor: str = "") -> list[dict]:
         """低コスト帯で、まだ実装されていないもの。
 
         まとめて1回の発注にできる候補。個別に見積を取ると件数ぶん
         手続きが増え、それ自体が実装されない理由になる。
+
+        ただし発注先が違えば1回にはまとまらない。文言の修正、広告の
+        配分変更、計測の実装は、渡す相手が別である。vendor で絞る。
         """
-        return [i for i in self.pending()
-                if (i.get("cost_band") or cost_band(i.get("effort", ""))) == "低"]
+        out = [i for i in self.pending()
+               if (i.get("cost_band") or cost_band(i.get("effort", ""))) == "低"]
+        if vendor:
+            out = [i for i in out if i.get("vendor") == vendor]
+        return out
+
+    def vendors(self) -> list[str]:
+        """低コスト帯に出てくる発注先の一覧"""
+        seen = []
+        for i in self.low_cost():
+            v = i.get("vendor") or "（未設定）"
+            if v not in seen:
+                seen.append(v)
+        return seen
 
     def revisit_due(self, period: str) -> list[dict]:
         """再検討の期日が来た保留。催促ではなく、期日が来たという事実。"""
@@ -259,6 +276,70 @@ class Ledger:
         return out
 
 
+# ---------------------------------------------------------------- 発注依頼書
+def order_sheet(lg: "Ledger", *, issued: str = "", to: str = "",
+                deadline: str = "", vendor: str = "") -> str:
+    """低コスト帯をまとめた、制作会社にそのまま渡せる1枚。
+
+    1件ずつ出すと、件数ぶん見積・発注・検収の手続きが発生する。
+    金額ではなく手続きの回数が実装されない理由になっている場合があるため、
+    同じ費用帯のものを1回の依頼にまとめる。
+
+    末尾で実装日を尋ねているのが要点。これが返ってこないと、
+    翌月の前後比較ができない。
+    """
+    rows = [i for i in lg.low_cost(vendor) if i.get("vendor_brief")]
+    labels = ((RULES.get("bundling") or {}).get("vendor_labels") or {})
+    lab = labels.get(vendor) or labels.get("_default") or {}
+    subject = lab.get("subject", "修正のご依頼")
+    scope = lab.get("scope", "いずれも小規模な作業です。")
+    L = [f"# {subject}", ""]
+    L += ["| | |", "|---|---|",
+          f"| 発行日 | {issued or '　'} |",
+          f"| 宛先 | {to or '　'} |",
+          f"| 件名 | {subject}（{len(rows)}件） |",
+          f"| ご希望納期 | {deadline or '　'} |", ""]
+    L += ["## ご依頼の趣旨", "", f"下記 {len(rows)} 件は、{scope}", ""]
+    if len(rows) >= 2:
+        # 1件しか無いときにこの断り書きを出すと、かえって不自然になる
+        L += ["**1件ずつではなく、まとめて1回のご対応としてお願いしたい**という趣旨です。",
+              "1件あたりの作業は小さくても、見積・発注・検収の手続きは"
+              "件数ぶん発生するためです。", ""]
+    L += ["## 修正の明細", ""]
+    for n, i in enumerate(rows, 1):
+        L += [f"### {n}. {i['title']}", "",
+              f"- **対象**：{i.get('target', '')}",
+              f"- **作業区分**：{i.get('effort', '')}",
+              f"- **ご依頼内容**：{i['vendor_brief']}"]
+        # 社内向けの背景（なぜ効くと考えているか）は載せない。
+        # レポートに書くことであって、作業の依頼書には要らない。
+        L += [f"- **管理番号**：{i['id']}", ""]
+    if not rows:
+        L += ["（該当する項目がありません）", ""]
+    L += ["## 変更してよい範囲", "",
+          "- **上記の明細に書かれた箇所のみ**を変更してください。"]
+    if vendor == "制作":
+        L.append("- 書体・文字サイズ・色・配置・レイアウトは**変更しないでください**。")
+    L += [
+          "- 明細に書かれていない箇所で、あわせて直すべき点にお気づきの場合は、",
+          "  **修正せずにご指摘だけください。** 別途ご相談させていただきます。", ""]
+    L += ["## ご確認いただきたいこと", "",
+          ("- [ ] 上記をまとめて1回のご対応としていただけるか"
+           if len(rows) >= 2 else "- [ ] ご対応いただけるか"),
+          "- [ ] お見積りの要否と、必要な場合は金額",
+          "- [ ] 着手可能な時期", ""]
+    L += ["## 作業完了後にお知らせください", "",
+          "**修正を反映した日付**（おおよそで構いません）をご連絡ください。",
+          "",
+          "反映日の前後で同じ日数を切って比較し、**効果を確認するために使います。**",
+          "日付が分からないと、数値が動いた理由をこの修正に結びつけられません。", ""]
+    L += ["| 管理番号 | 反映日 |", "|---|---|"]
+    for i in rows:
+        L.append(f"| {i['id']} | 　 |")
+    L.append("")
+    return "\n".join(L) + "\n"
+
+
 # ---------------------------------------------------------------- 確認シート
 def status_sheet(lg: "Ledger", period: str) -> str:
     """打ち合わせに持っていく、記入済みの実施状況シート。
@@ -334,6 +415,13 @@ def main() -> int:
                     help="再検討の期日が来た保留を表示")
     ap.add_argument("--status-sheet", metavar="YYYY-MM",
                     help="打ち合わせ用の確認シートを出す")
+    ap.add_argument("--order-sheet", action="store_true",
+                    help="低コスト帯をまとめた発注依頼書を出す")
+    ap.add_argument("--issued", default="", help="発注依頼書の発行日")
+    ap.add_argument("--to", default="", help="発注依頼書の宛先")
+    ap.add_argument("--deadline", default="", help="発注依頼書の希望納期")
+    ap.add_argument("--vendor", default="",
+                    help="発注先で絞る（制作／広告運用／計測 など）")
     ap.add_argument("--blocked-by", default="", help="保留にするとき：何待ちか")
     ap.add_argument("--revisit-on", default="", help="保留にするとき：再検討の目安 YYYY-MM")
     ap.add_argument("--stats", action="store_true", help="集計を表示")
@@ -385,6 +473,20 @@ def main() -> int:
             print(line(i) + f"   実装 {i['implemented_on']}／指標 {i.get('metric','')}")
         return 0
 
+    if a.order_sheet:
+        if not a.vendor:
+            print("発注先を指定してください（--vendor）。"
+                  "同じ費用帯でも、渡す相手が違えば1回の依頼にまとまりません。")
+            print("\n低コスト帯に出てくる発注先：")
+            for v in lg.vendors():
+                n = len(lg.low_cost(v if v != "（未設定）" else ""))
+                print(f"  {v}　{len(lg.low_cost(v))} 件" if v != "（未設定）"
+                      else f"  {v}")
+            return 1
+        print(order_sheet(lg, issued=a.issued, to=a.to,
+                          deadline=a.deadline, vendor=a.vendor))
+        return 0
+
     if a.status_sheet:
         print(status_sheet(lg, a.status_sheet))
         return 0
@@ -403,12 +505,14 @@ def main() -> int:
         return 0
 
     if a.low_cost:
-        rows = lg.low_cost()
-        print(f"低コスト帯の未実装：{len(rows)} 件")
+        rows = lg.low_cost(a.vendor)
+        print(f"低コスト帯の未実装：{len(rows)} 件"
+              + (f"（発注先 {a.vendor}）" if a.vendor else ""))
         print("外注しても金額が小さいものです。"
               "**個別に見積を取らず、まとめて1回の発注にする**のが要点です。\n")
         for i in rows:
-            print(line(i) + f"   工数 {i.get('effort','')}")
+            print(line(i) + f"   工数 {i.get('effort','')}"
+                  f"／発注先 {i.get('vendor') or '（未設定）'}")
             if i.get("vendor_brief"):
                 print(f"      発注指示：{i['vendor_brief']}")
         return 0

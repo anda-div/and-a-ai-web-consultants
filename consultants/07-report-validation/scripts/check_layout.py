@@ -14,6 +14,7 @@
     画像のゆがみ 画像が元の縦横比のまま置かれているか
     細い画像    縦長すぎて何が写っているか読めなくなっていないか
     文字サイズ  本文が読める大きさを下回っていないか
+    制御文字    パスのエスケープ漏れで _x000D_ などが混ざっていないか
 
 見つからないもの（人の目が必要）
 
@@ -26,7 +27,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
+import zipfile
 
 from pptx import Presentation
 from pptx.enum.shapes import MSO_SHAPE_TYPE
@@ -121,11 +124,38 @@ def inside(inner: Shape, outer: Shape, tol: float = 0.05) -> bool:
             and inner.bottom <= outer.bottom + tol)
 
 
+def control_chars(path: str) -> list[tuple[int, str, str, str]]:
+    """XMLに退避された制御文字を探す。
+
+    Windowsのパスを生の文字列にせずに書くと、\\r や \\b が
+    エスケープとして解釈される。python-pptx では普通の文字列に
+    見えるが、PowerPointでは _x000D_ のように表示される。
+    """
+    out = []
+    with zipfile.ZipFile(path) as z:
+        names = sorted((n for n in z.namelist()
+                        if n.startswith("ppt/slides/slide")),
+                       key=lambda n: int(re.findall(r"(\d+)", n)[0]))
+        for n in names:
+            xml = z.read(n).decode("utf-8", "ignore")
+            no = int(re.findall(r"(\d+)", n)[0])
+            for m in re.finditer(r"_x00[0-9A-Fa-f]{2}_", xml):
+                ctx = re.sub(r"<[^>]*>", "", xml[max(0, m.start() - 60):m.end() + 30])
+                out.append((no, "制御文字", ctx.strip()[:40],
+                            f"{m.group(0)} が文字として入っています。"
+                            "パスを書いた文字列のエスケープ漏れです"))
+    return out
+
+
 def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
           summary_prefix: str, margin: float) -> tuple[list, list]:
     prs = Presentation(path)
     SW, SH = cm(prs.slide_width), cm(prs.slide_height)
     major, minor = [], []
+
+    # 描画するまで見えないため、最初に拾っておく
+    for n, kind, label, detail in control_chars(path):
+        major.append((n, kind, label, detail))
 
     for n, slide in enumerate(prs.slides, 1):
         shapes = collect(slide, n)

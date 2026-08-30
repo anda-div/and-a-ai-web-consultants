@@ -82,9 +82,10 @@ python scripts/build_briefing.py 2026-07   # 月初に1回。白紙から考え�
 これは**組織の問題（決まらない）**と**方法の問題（測れない）**が混ざっているためです。混ぜたまま解こうとすると、実装されなかった提案のための立派な効果測定設計ができあがります。
 
 ```bash
-python scripts/ledger.py --low-cost              # まとめて1回の発注にできる候補
-python scripts/ledger.py --status-sheet 2026-09  # 打ち合わせ用の確認シート
-python scripts/ledger.py --revisit-due 2026-12   # 再検討の期日が来た保留
+python scripts/ledger.py --low-cost                    # まとめて1回の発注にできる候補
+python scripts/ledger.py --order-sheet --vendor 制作    # そのまま渡せる発注依頼書
+python scripts/ledger.py --status-sheet 2026-09        # 打ち合わせ用の確認シート
+python scripts/ledger.py --revisit-due 2026-12         # 再検討の期日が来た保留
 ```
 
 要点は3つです。
@@ -112,6 +113,7 @@ python scripts/check_layout.py output/report.pptx
 | 細い画像 | 縦長すぎて読めなくなっていないか。分割して横並びにしているページは対象外 |
 | 下の空き | 内容の下端と要約枠の間（既定 3cm 以上で指摘） |
 | 文字サイズ | 箱の中の本文が既定 6pt を下回っていないか。注記帯とキャプションは対象外 |
+| 制御文字 | パスのエスケープ漏れで `_x000D_` などが混ざっていないか（描画するまで見えない） |
 
 要対応が1件でもあれば終了コード 1 を返すので、生成の直後に続けて実行できます。
 
