@@ -134,17 +134,48 @@ def build_url(args: argparse.Namespace) -> str:
     )
 
 
-def wait_for_visual(page, timeout_s: float) -> str:
-    """ヒートマップ表示領域が現れてスクロール可能になるまで待ち、セレクタを返す。"""
+def wait_for_visual(page, timeout_s: float):
+    """ヒートマップ表示領域を待って、(セレクタ, 分割して撮るか) を返す。
+
+    **1画面に収まるページでは、表示領域がスクロールしない。**
+    ログインだけのページなど、内容が少ないページで起きる。
+    実測では、スクロールデータが 5%〜95% すべて「訪問者の100%」で
+    ドロップオフ0%、つまり全員が最下部に到達しているページだった。
+
+    以前はスクロールできることを条件にしていたため、こうしたページで
+    「表示領域が見つかりません」と誤って失敗していた。
+    スクロールしないなら、分割せず1枚で撮ればよい。
+    """
     deadline = time.time() + timeout_s
-    selector = f"#{VISUAL_ID}"
+    own = f"#{VISUAL_ID}"
+
+    # ★ #heatmapVisual があるなら、それ以外は見ない。
+    #
+    # 以前は「スクロールできる大きなdiv」を代わりに探していたが、
+    # 1画面に収まるページでは #heatmapVisual がスクロールしないため、
+    # 代わりに**左側のランキングパネル**（クリック数の多い順・312要素で
+    # 37,000px）が選ばれてしまった。ヒートマップではないものを、
+    # ヒートマップとして保存していたことになる。
     while time.time() < deadline:
-        page.evaluate(FIND_VISUAL, VISUAL_ID)
-        for sel in (f"#{VISUAL_ID}", "[data-capture-target='1']"):
-            geo = page.evaluate(READ_GEOMETRY, sel)
-            if geo and geo["scrollHeight"] > geo["clientHeight"] + 50:
-                return sel
+        geo = page.evaluate(READ_GEOMETRY, own)
+        if geo and geo["clientHeight"] >= 300:
+            if geo["scrollHeight"] > geo["clientHeight"] + 50:
+                return own, True
+            print(f"[*] 表示領域がスクロールしません（高さ "
+                  f"{geo['clientHeight']}px）。"
+                  f"1画面に収まるページとみて、1枚で撮ります。")
+            return own, False
         time.sleep(1.0)
+
+    # id が見つからない場合だけ、代わりを探す。
+    # id が変わったときの保険であり、上の取り違えとは別の話。
+    page.evaluate(FIND_VISUAL, VISUAL_ID)
+    sub = "[data-capture-target='1']"
+    geo = page.evaluate(READ_GEOMETRY, sub)
+    if geo and geo["scrollHeight"] > geo["clientHeight"] + 50:
+        print(f"[*] #{VISUAL_ID} が見つからないため、代わりの要素を使います。")
+        return sub, True
+
     raise TimeoutError(
         "ヒートマップ表示領域が見つかりません。"
         "ログイン状態、期間・デバイス・URL照合条件、描画完了を確認してください。"
@@ -171,9 +202,38 @@ def capture(args: argparse.Namespace) -> Path:
         page.goto(url, wait_until="load", timeout=90_000)
         page.wait_for_timeout(int(args.settle * 1000))
 
-        sel = wait_for_visual(page, args.timeout)
+        sel, tiled = wait_for_visual(page, args.timeout)
         geo = page.evaluate(READ_GEOMETRY, sel)
         total, view = geo["scrollHeight"], geo["clientHeight"]
+
+        if not tiled:
+            # スクロールしない＝1画面に収まっている。1枚撮って終わり。
+            path = tiles_dir / "tile_000.png"
+            page.locator(sel).screenshot(path=str(path))
+            ctx.close()
+            im = trim_margins(Image.open(path).convert("RGB"))
+            joined = out_dir / f"heatmap_{args.type}_joined.png"
+            im.save(joined)
+            (out_dir / "capture_meta.json").write_text(
+                json.dumps({
+                    "clarityUrl": url,
+                    "pageUrl": args.page_url,
+                    "urlMatch": args.url_match or args.page_url,
+                    "matchOp": args.op,
+                    "device": args.device,
+                    "date": args.date,
+                    "heatmapType": args.type,
+                    "pageHeightCss": total,
+                    "viewHeightCss": view,
+                    "stickyTopCss": 0,
+                    "stickyBottomCss": 0,
+                    "onePiece": True,
+                    "tiles": [{"file": path.name, "scrollTop": 0}],
+                    "joined": joined.name,
+                }, ensure_ascii=False, indent=1), encoding="utf-8")
+            print(f"[+] 結合画像: {joined}（1枚撮り {im.size[0]}x{im.size[1]}）")
+            print(f"[+] メタ情報: {out_dir / 'capture_meta.json'}")
+            return joined
         # 貼り付く要素を消す場合、その高さぶんは隣のタイルで埋めるので、
         # 重なりをその合計より広く取っておく必要がある。
         # 自動判定は撮り終えないと分からないため、先に広めに取っておく。

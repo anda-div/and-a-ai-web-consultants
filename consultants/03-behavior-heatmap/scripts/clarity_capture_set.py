@@ -84,6 +84,12 @@ def main() -> int:
     p.add_argument("--scroll-sticky-top", type=int, default=None,
                    help="スクロールマップだけヘッダーを厚く切る（CSS px）。"
                         "省略時はクリックマップで測った値をそのまま使う")
+    p.add_argument("--settle", type=float, default=None,
+                   help="初回描画の待機秒。縦に長いページでは増やす")
+    p.add_argument("--timeout", type=float, default=None,
+                   help="表示領域が現れるまで待つ上限秒")
+    p.add_argument("--tile-delay", type=float, default=None,
+                   help="1タイルごとの待機秒")
     p.add_argument("--profile", default=".clarity_profile")
     a = p.parse_args()
 
@@ -96,6 +102,12 @@ def main() -> int:
               "--op", a.op, "--date", a.date, "--profile", a.profile]
     if a.url_match:
         common += ["--url-match", a.url_match]
+    # 縦に長いページは描画に時間がかかる。既定のままだと
+    # 「表示領域が見つかりません」で止まる（実測：37,000px のページで発生）。
+    for flag, val in (("--settle", a.settle), ("--timeout", a.timeout),
+                      ("--tile-delay", a.tile_delay)):
+        if val is not None:
+            common += [flag, str(val)]
 
     for device in [d.strip() for d in a.devices.split(",") if d.strip()]:
         short = SHORT.get(device, device.lower())
