@@ -13,7 +13,8 @@ deck_kit（作図の最小部品）の上に、実績レポートで繰り返し
   C boxes          … 箱だけで構成（サマリー・図解・まとめ）
   D capture_right  … 左に箱、右にキャプチャ（課題詳細・改善提案）
     capture_left   … 左にキャプチャ、右に箱（競合比較）
-  E heatmap        … deck_kit.heatmap_slide をそのまま使う
+  E heatmap        … deck_kit.heatmap_slide をそのまま使う（全体を分割して横並び）
+  F heatmap_focus  … deck_kit.heatmap_focus_slide（所見が触れる区間を拡大）
 
 使い方:
     from report_config import load
@@ -366,5 +367,6 @@ def build_site_kit(K, cfg, *, report_key: str = "site"):
         competitor_pages=competitor_pages,
         glossary=glossary,
         heatmap=K.heatmap_slide,
+        heatmap_focus=K.heatmap_focus_slide,
         geometry=PG,
     )
