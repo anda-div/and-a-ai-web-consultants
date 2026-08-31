@@ -64,6 +64,33 @@ def read_meta(out_dir: Path) -> dict:
         return json.load(f)
 
 
+def widest(*bounds):
+    """いくつかの「左右」のうち、いちばん広い範囲を返す。
+
+    どれも None なら None（＝切らない）。片方だけあるならそれを使う。
+    """
+    got = [b for b in bounds if b]
+    if not got:
+        return None
+    return min(b[0] for b in got), max(b[1] for b in got)
+
+
+def fmt(b) -> str:
+    return f"{b[0]}〜{b[1]}" if b else "判定なし"
+
+
+def crop_to(src: Path, dst: Path, bounds) -> None:
+    """左右を切って保存する。bounds が None なら、そのまま複製する。"""
+    if not bounds:
+        shutil.copy2(src, dst)
+        return
+    from PIL import Image
+    im = Image.open(src)
+    left = max(0, min(bounds[0], im.width - 1))
+    right = max(left + 1, min(bounds[1], im.width))
+    im.crop((left, 0, right, im.height)).save(dst)
+
+
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     p = argparse.ArgumentParser(
@@ -113,10 +140,12 @@ def main() -> int:
         short = SHORT.get(device, device.lower())
 
         # 1) クリックマップ。貼り付く要素の高さはここで自動判定させる。
+        #    左右の余白は落とさずに撮る。2枚そろってから 3) でまとめて切る。
         d1 = work / f"{a.name}_{short}_click"
         t0 = time.time()
         print(f"■ {device} クリックマップ")
-        run(common + ["--type", "tap", "--device", device, "--out", str(d1)])
+        run(common + ["--type", "tap", "--device", device, "--out", str(d1),
+                      "--trim", "none"])
         m1 = read_meta(d1)
         top, bottom = m1["stickyTopCss"], m1["stickyBottomCss"]
 
@@ -127,13 +156,37 @@ def main() -> int:
         note = "引き継ぎ" if s_top == top else "指定値"
         print(f"■ {device} スクロールマップ（貼り付き 上{s_top}/下{bottom} {note}）")
         run(common + ["--type", "scroll", "--device", device, "--out", str(d2),
-                      "--sticky-top", str(s_top), "--sticky-bottom", str(bottom)])
+                      "--sticky-top", str(s_top), "--sticky-bottom", str(bottom),
+                      "--trim", "none"])
         m2 = read_meta(d2)
+
+        # 3) 左右の余白を落とすのは、2枚とも撮り終えた**ここ**で行う。
+        #
+        #    それぞれに任せると、同じページ・同じデバイスなのに幅の違う画像が
+        #    できる（実測：MyPage PC で クリック 567px / スクロール 1492px）。
+        #    幅が違うと、並べたときや同じ枠に収めたときに縮尺がずれ、
+        #    所見が指している位置も合わなくなる。
+        #
+        #    **クリックマップの判定は狭く出る。** 点が疎なため「中身がない列」と
+        #    見なされる列が多い。実測では常にクリック側が狭かった。
+        #
+        #      MyPage PC   クリック 567 / スクロール 1492（正しいのは1492）
+        #      MyPage SP   クリック 374 / スクロール  410（正しいのは 410）
+        #      Driving SP  クリック 326 / スクロール  352（正しいのは 352）
+        #
+        #    そこで**両方の判定を持ち寄り、広い側で揃える。**
+        #    どちらかが中身と見なした列は切り落とさない、という決め方である。
+        #    狭い側に合わせると、上のように入力欄が切れた画像になる。
+        bounds = widest(m1.get("trimDetected"), m2.get("trimDetected"))
+        if bounds:
+            print(f"   左右 {bounds[0]}〜{bounds[1]} で2枚とも切ります"
+                  f"（クリック {fmt(m1.get('trimDetected'))} / "
+                  f"スクロール {fmt(m2.get('trimDetected'))}）")
 
         for kind, d, m in (("tap", d1, m1), ("scroll", d2, m2)):
             src = d / m["joined"]
             dst = out / f"{a.name}_{short}_{KIND[kind]}.png"
-            shutil.copy2(src, dst)
+            crop_to(src, dst, bounds)
             log.append({
                 "file": dst.name,
                 "device": device,
@@ -143,6 +196,8 @@ def main() -> int:
                 "date": a.date,
                 "stickyTopCss": m["stickyTopCss"],
                 "stickyBottomCss": m["stickyBottomCss"],
+                "trimLeftRight": list(bounds) if bounds else None,
+                "trimDetected": m.get("trimDetected"),
                 "tiles": len(m["tiles"]),
             })
             print(f"   → {dst}")
