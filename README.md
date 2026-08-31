@@ -67,6 +67,14 @@ Search Console も**公式APIがあり、同じ認証の仕組みで自動化で
 注意点は [shared/SEARCH_CONSOLE_LOCAL_FETCH.md](shared/SEARCH_CONSOLE_LOCAL_FETCH.md) に
 あります。この2つで、月次レポートの数値データ収集は全自動になります。
 
+共通部品は `shared/scripts/ga4_client.py`（認証・再試行・GASと同じ丸め・xlsx書き出し）と
+`shared/scripts/compare_xlsx.py`（全セル突き合わせ）です。**どのシートをどう作るかは
+案件ごとに違う**ため、そこは各案件で書きます。
+
+**すでにGASで回している案件を移す場合は、[shared/PORTING_RUNBOOK.md](shared/PORTING_RUNBOOK.md)
+を上から順に実行してください。** 合計が合っていても中身が違うことがあるため、
+全セルで一致するまで切り替えない手順にしています。
+
 ## データと機密情報
 
 - 実クライアントのデータ、名称、URL、ID、認証情報をGitへコミットしないでください。
