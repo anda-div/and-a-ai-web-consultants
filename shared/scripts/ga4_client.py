@@ -184,13 +184,92 @@ class GA4:
         return to_int(rows[0].metric_values[0].value) if rows else 0
 
 
-def event_filter(event_name: str):
-    """イベント名の完全一致で絞り込む条件を作る。"""
+# ---------------------------------------------------------------- 絞り込み
+#
+# GAS は絞り込み条件を素のJSONで書く。Python のライブラリは型で書く。
+# 対応が付きやすいよう、GAS と同じ組み立て方ができる部品を用意する。
+#
+#   GAS   { andGroup: { expressions: [ A, B ] } }
+#   Python  f_and(A, B)
+#
+# これがないと、案件ごとに import と入れ子を書き直すことになる。
+
+def _sf(field: str, match: str, value: str, case_sensitive: bool = False):
+    from google.analytics.data_v1beta.types import Filter, FilterExpression
+    mt = getattr(Filter.StringFilter.MatchType, match)
+    return FilterExpression(filter=Filter(
+        field_name=field,
+        string_filter=Filter.StringFilter(
+            match_type=mt, value=value, case_sensitive=case_sensitive)))
+
+
+def f_exact(field: str, value: str, case_sensitive: bool = False):
+    """完全一致。GAS の matchType: 'EXACT'"""
+    return _sf(field, "EXACT", value, case_sensitive)
+
+
+def f_contains(field: str, value: str, case_sensitive: bool = False):
+    """部分一致。GAS の matchType: 'CONTAINS'"""
+    return _sf(field, "CONTAINS", value, case_sensitive)
+
+
+def f_begins(field: str, value: str, case_sensitive: bool = False):
+    """前方一致。GAS の matchType: 'BEGINS_WITH'"""
+    return _sf(field, "BEGINS_WITH", value, case_sensitive)
+
+
+def f_ends(field: str, value: str, case_sensitive: bool = False):
+    """後方一致。GAS の matchType: 'ENDS_WITH'"""
+    return _sf(field, "ENDS_WITH", value, case_sensitive)
+
+
+def f_regex(field: str, pattern: str, case_sensitive: bool = False):
+    """正規表現の完全一致。GAS の matchType: 'FULL_REGEXP'
+
+    GAS 側が `.*banner.*|.*cpc.*` のように全体一致で書いていることが多い。
+    部分一致のつもりで移すと結果が変わるので、GASの綴りをそのまま持ってくる。
+    """
+    return _sf(field, "FULL_REGEXP", pattern, case_sensitive)
+
+
+def f_in(field: str, values, case_sensitive: bool = False):
+    """いずれかに一致。GAS の inListFilter"""
     from google.analytics.data_v1beta.types import Filter, FilterExpression
     return FilterExpression(filter=Filter(
-        field_name="eventName",
-        string_filter=Filter.StringFilter(
-            match_type=Filter.StringFilter.MatchType.EXACT, value=event_name)))
+        field_name=field,
+        in_list_filter=Filter.InListFilter(
+            values=list(values), case_sensitive=case_sensitive)))
+
+
+def f_and(*exprs):
+    """すべてを満たす。GAS の andGroup"""
+    from google.analytics.data_v1beta.types import (
+        FilterExpression, FilterExpressionList)
+    keep = [e for e in exprs if e is not None]
+    if len(keep) == 1:
+        return keep[0]
+    return FilterExpression(and_group=FilterExpressionList(expressions=keep))
+
+
+def f_or(*exprs):
+    """いずれかを満たす。GAS の orGroup"""
+    from google.analytics.data_v1beta.types import (
+        FilterExpression, FilterExpressionList)
+    keep = [e for e in exprs if e is not None]
+    if len(keep) == 1:
+        return keep[0]
+    return FilterExpression(or_group=FilterExpressionList(expressions=keep))
+
+
+def f_not(expr):
+    """満たさない。GAS の notExpression"""
+    from google.analytics.data_v1beta.types import FilterExpression
+    return FilterExpression(not_expression=expr)
+
+
+def event_filter(event_name: str):
+    """イベント名の完全一致で絞り込む条件を作る。"""
+    return f_exact("eventName", event_name)
 
 
 def dim(row, i):

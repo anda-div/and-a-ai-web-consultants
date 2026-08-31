@@ -91,6 +91,36 @@ CAMPAIGN_CANONICAL   = { 'google_p-max': 'google_pmax_cpn', ... };
 写し損ねても合計は動かないのに、広告別の内訳だけが変わる。
 GAS の中の定数・条件分岐・置換は、**1つ残らず洗い出してから**書き始める。
 
+### 絞り込み条件の写し方
+
+GAS は素のJSONで書く。Python は型で書く。**同じ形で書ける部品**を用意してあるので、
+入れ子の構造をそのまま写せる。
+
+| GAS | 共通部品 |
+| --- | --- |
+| `{ filter: { stringFilter: { matchType: 'EXACT', value: v } } }` | `G.f_exact(field, v)` |
+| `matchType: 'CONTAINS'` | `G.f_contains(field, v)` |
+| `matchType: 'BEGINS_WITH'` | `G.f_begins(field, v)` |
+| `matchType: 'FULL_REGEXP'` | `G.f_regex(field, pattern)` |
+| `inListFilter: { values: [...] }` | `G.f_in(field, [...])` |
+| `{ andGroup: { expressions: [A, B] } }` | `G.f_and(A, B)` |
+| `{ orGroup: { expressions: [A, B] } }` | `G.f_or(A, B)` |
+| `{ notExpression: A }` | `G.f_not(A)` |
+
+```python
+# GAS 側
+#   const AD_MEDIA_REGEX = '.*banner.*|.*cpc.*|.*paid.*|.*display.*|.*video.*';
+#   function segmentFilter_Ad_SB() {
+#     return { andGroup: { expressions: [ mediumIsAd(), campaignIsSB() ] } }; }
+ad  = G.f_regex("sessionMedium", ".*banner.*|.*cpc.*|.*paid.*|.*display.*|.*video.*")
+cpn = G.f_or(G.f_contains("sessionCampaignName", "_cpn"),
+             G.f_in("sessionCampaignName", ["google_p-max", "meta_rt"]))
+ad_sb = G.f_and(ad, cpn)
+```
+
+**正規表現は GAS の綴りをそのまま持ってくる。** `FULL_REGEXP` は全体一致なので、
+`.*` を省くと結果が変わる。
+
 ### 書き方
 
 案件フォルダに `fetch_ga4.py` を置き、共通部品を読み込む。
