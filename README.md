@@ -62,6 +62,11 @@ GA4をPCから直接取得する構成そのもの（認証・GASとの一致確
 `gcloud` 内蔵のクライアントIDでは `analytics.readonly` が通らなくなっているため、
 **自前のOAuthクライアントIDを1つ作る必要があります**。
 
+Search Console も**公式APIがあり、同じ認証の仕組みで自動化できます**
+（スコープを1つ足すだけ）。管理画面の書き出しと1セルも違わないファイルを作るための
+注意点は [shared/SEARCH_CONSOLE_LOCAL_FETCH.md](shared/SEARCH_CONSOLE_LOCAL_FETCH.md) に
+あります。この2つで、月次レポートの数値データ収集は全自動になります。
+
 ## データと機密情報
 
 - 実クライアントのデータ、名称、URL、ID、認証情報をGitへコミットしないでください。
