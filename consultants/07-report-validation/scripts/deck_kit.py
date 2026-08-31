@@ -506,6 +506,188 @@ def build_kit(prs, cfg, *, report_key=None, strip_template_slides: bool = True):
         note(s, note_text)
         return s
 
+    def hm_trimmed(fname):
+        """左右の白い余白を落とした画像を返す（結果は使い回す）。
+
+        Clarityは表示領域の中央にページを縮小表示するため、両側に白い帯が残る。
+        そのまま貼ると、ページが小さく余白ばかりの図になる（実測で幅の6割が余白）。
+        列ごとの中身の割合を見て、割合の高い列が連続する一番長い区間を取る。
+        端には枠線やスクロールバーが写るので、「白でない列」を探す方法では切れない。
+        """
+        from PIL import Image as _I
+        _I.MAX_IMAGE_PIXELS = None
+
+        cache = os.path.join(PIECE_DIR, f"{fname[:-4]}_trim.png")
+        if os.path.exists(cache):
+            return _I.open(cache).convert("RGB")
+
+        im = _I.open(os.path.join(HM_DIR, fname)).convert("RGB")
+        try:
+            import numpy as np
+            ratio = (np.asarray(im, dtype=np.int16) < 249).any(axis=2).mean(axis=0)
+            solid = ratio >= 0.10
+            best, start = (0, -1), None
+            for x in range(len(solid) + 1):
+                if x < len(solid) and solid[x]:
+                    if start is None:
+                        start = x
+                elif start is not None:
+                    if x - start > best[1] - best[0]:
+                        best = (start, x)
+                    start = None
+            left, right = best
+            if right - left >= im.width * 0.05:
+                im = im.crop((max(0, left - 4), 0,
+                              min(im.width, right + 4), im.height))
+        except ImportError:
+            pass
+        im.save(cache)
+        return im
+
+    def hm_crop(fname, lo, hi):
+        """縦長ヒートマップから、上端からの割合で指定した帯を切り出す。"""
+        im = hm_trimmed(fname)
+        w, h = im.size
+        y0, y1 = int(h * lo), int(h * hi)
+        y1 = max(y1, y0 + 10)
+        fp = os.path.join(PIECE_DIR,
+                          f"{fname[:-4]}_focus_{int(lo*1000)}_{int(hi*1000)}.png")
+        im.crop((0, y0, w, y1)).save(fp)
+        return fp, w, y1 - y0
+
+    def hm_fit_band(fname, lo, hi, frame_w_cm, frame_h_cm):
+        """枠にちょうど収まる帯を決める。返り値は (上端割合, 下端割合, 縮めたか)。
+
+        帯の高さは枠の縦横比で決まる。指定した区間が枠より縦に長ければ縮め、
+        短ければ下へ伸ばす。**始点（lo）は動かさない。**
+        所見が触れ始める位置を作り手が決め、どこまで見せるかは枠が決める、という分担。
+
+        縮めるほうへ寄せるのは、読めない大きさの画像を載せても根拠にならないため。
+        縮めた場合はその旨を返し、呼び出し側が知らせる。
+        """
+        im = hm_trimmed(fname)
+        w, h = im.size
+        fit_h_px = min(w * (frame_h_cm / frame_w_cm), h)   # 枠にちょうど入る高さ
+        asked_h_px = max((hi - lo) * h, 1.0)
+        y0 = min(lo * h, h - fit_h_px)
+        y0 = max(0.0, y0)
+        return y0 / h, min(1.0, (y0 + fit_h_px) / h), asked_h_px > fit_h_px * 1.05
+
+    def _position_bar(s, x, y, w, h, lo, hi):
+        """ページ全体のどこを見ているかを示す縦棒。
+
+        全体像の縮小版を置く手もあるが、縦横比が30:1にもなるページでは
+        幅が数ミリになり、何も読めない絵になる。位置だけを示す。
+        """
+        base = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y), Cm(w), Cm(h))
+        base.fill.solid()
+        base.fill.fore_color.rgb = RGBColor(0xEC, 0xEF, 0xF4)
+        base.line.color.rgb = RGBColor(0xD5, 0xDA, 0xE3)
+        base.line.width = Pt(0.5)
+        base.shadow.inherit = False
+        base.text_frame.text = ""
+
+        band = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(x), Cm(y + h * lo),
+                                  Cm(w), Cm(max(h * (hi - lo), 0.12)))
+        band.fill.solid()
+        band.fill.fore_color.rgb = BLUE
+        band.line.fill.background()
+        band.shadow.inherit = False
+        band.text_frame.text = ""
+
+        for frac, label in ((0.0, "上端"), (1.0, "下端")):
+            t = s.shapes.add_textbox(Cm(x - 0.35), Cm(y + h * frac - 0.28),
+                                     Cm(w + 0.7), Cm(0.55))
+            t.text_frame.word_wrap = False
+            par = t.text_frame.paragraphs[0]
+            par.alignment = PP_ALIGN.CENTER
+            run(par, label, LGRAY, False, 6.5)
+
+    def heatmap_focus_slide(title, sub, scroll_file, click_file, focus,
+                            lines, summ, note_text, focus_label=None):
+        """注目している区間だけを大きく見せる（全体は位置の棒で示す）。
+
+        ページ全体を分割して横に並べる方式は、1ページが縦に長いほど1枚が細くなる。
+        実測では8列に分けたために幅が2.1cmに制限され、そこで縮尺が決まっていた。
+        結果、画像は小さく、スライドの下半分が空くことになる。
+
+        レポートの目的は全ページを見せることではなく、所見の根拠を示すことなので、
+        **所見が触れている区間だけを切り出して大きく置く**。
+        どこを見ているかは、左の縦棒で示す。
+
+        focus は (上端からの割合, 同) の2つ組。例: (0.10, 0.26)
+        ScrollとClickで同じ帯を切るので、2枚を見比べられる。
+        """
+        lm, tw = HM["left_margin"], HM["text_width"]
+        lab_top, lab_h = HM["label_top"], HM["label_height"]
+        img_top, img_h = HM["image_top"], HM["image_height"]
+        lo, hi = focus
+        area = SW - lm - 0.4 - tw - 0.9
+
+        BAR_W, BAR_GAP, GROUP_GAP = 0.55, 0.30, 0.60
+        gw = (area - GROUP_GAP) / 2
+        pic_w_max = gw - BAR_W - BAR_GAP
+
+        s = content(title, sub)
+        _sz = fit_size(lines, tw, 14.2)
+        box(s, SW - 0.9 - tw, 2.20, tw, 14.2, None, lines,
+            size=_sz, hsize=min(11, _sz + 1.5))
+
+        for g, (fn, label) in enumerate([(scroll_file, "Scroll map（到達度）"),
+                                         (click_file, "Click map（クリック分布）")]):
+            gx = lm + g * (gw + GROUP_GAP)
+
+            # 枠が余るなら、所見が触れる区間を残したまま下へ伸ばす。
+            # ScrollとClickはページの高さが違うので、画像ごとに合わせる。
+            # 共通の帯にすると、片方に合わせたぶんもう片方がはみ出る。
+            if fn is None:
+                a, b, shortened = lo, hi, False
+            else:
+                a, b, shortened = hm_fit_band(fn, lo, hi, pic_w_max, img_h)
+            band_txt = focus_label or f"上端から {a * 100:.0f}％〜{b * 100:.0f}％"
+
+            tbx = s.shapes.add_textbox(Cm(gx), Cm(lab_top), Cm(gw), Cm(lab_h))
+            tbx.text_frame.word_wrap = True
+            par = tbx.text_frame.paragraphs[0]
+            par.alignment = PP_ALIGN.CENTER
+            run(par, label, NAVY, True, 9)
+            run(par, f"　{band_txt}", LGRAY, False, 7.5)
+
+            if fn is None:
+                b = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Cm(gx),
+                                       Cm(img_top), Cm(gw), Cm(6.0))
+                b.fill.solid()
+                b.fill.fore_color.rgb = RGBColor(0xF2, 0xF2, 0xF2)
+                b.line.color.rgb = LGRAY
+                b.line.width = Pt(0.75)
+                b.shadow.inherit = False
+                tf = b.text_frame
+                tf.word_wrap = True
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                run(tf.paragraphs[0], "（このヒートマップは取得できていません）",
+                    LGRAY, True, 10, PP_ALIGN.CENTER)
+                continue
+
+            _position_bar(s, gx, img_top, BAR_W, img_h, a, b)
+
+            fp, cw_px, ch_px = hm_crop(fn, a, b)
+            cw_cm, ch_cm = cw_px / 37.8, ch_px / 37.8
+            r = min(pic_w_max / cw_cm, img_h / ch_cm)
+            pw, ph = cw_cm * r, ch_cm * r
+            px = gx + BAR_W + BAR_GAP + (pic_w_max - pw) / 2
+            pic = s.shapes.add_picture(fp, Cm(px), Cm(img_top), Cm(pw), Cm(ph))
+            pic.line.color.rgb = RGBColor(0xBF, 0xBF, 0xBF)
+            pic.line.width = Pt(0.5)
+
+            if shortened:
+                print(f"   ※ P{len(prs.slides._sldIdLst)} {label}："
+                      f"指定した区間が枠より縦に長いため、"
+                      f"上端から {b * 100:.0f}％ までに縮めました")
+
+        summary(s, summ)
+        note(s, note_text)
+        return s
+
     # ------------------------------------------------------ 品質チェック
     def report_overflow():
         """本文最小サイズで収まらなかった箱を一覧表示する。
@@ -529,6 +711,8 @@ def build_kit(prs, cfg, *, report_key=None, strip_template_slides: bool = True):
         summary=summary, note=note, equalize=equalize,
         est_box_h=est_box_h, box=box, table=table, chart=chart,
         fit_size=fit_size, hm_split=hm_split, heatmap_slide=heatmap_slide,
+        hm_crop=hm_crop, hm_trimmed=hm_trimmed, hm_fit_band=hm_fit_band,
+        heatmap_focus_slide=heatmap_focus_slide,
         report_overflow=report_overflow,
         num=num, fmt=fmt, fmt1=fmt1, dpct=dpct, cvr_dpct=cvr_dpct, txt_w=txt_w,
     )
