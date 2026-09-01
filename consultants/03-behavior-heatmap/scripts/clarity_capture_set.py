@@ -101,7 +101,12 @@ def main() -> int:
     p.add_argument("--url-match", help="集計対象の照合値。省略時は --page-url")
     p.add_argument("--op", default="exact",
                    choices=["contains", "endswith", "exact", "exclude"])
-    p.add_argument("--date", default="Last 30 days", help="期間。UIの選択肢と同じ文字列")
+    p.add_argument(
+        "--date", default="Last 30 days",
+        help="期間。月次レポートでは暦月を渡す（2026-08）。"
+             "任意の範囲は 2026-08-01..2026-08-31。"
+             "UIの選択肢の文字列（Last 30 days など）もそのまま使えるが、"
+             "実行日から遡るため月次には向かない")
     p.add_argument("--devices", default="Desktop,Mobile",
                    help="撮るデバイス。カンマ区切り")
     p.add_argument("--out", default="_input/clarity_captures/stitched",
