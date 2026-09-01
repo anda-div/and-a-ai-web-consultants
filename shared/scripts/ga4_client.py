@@ -183,6 +183,96 @@ class GA4:
                            dimension_filter=event_filter(event_name))
         return to_int(rows[0].metric_values[0].value) if rows else 0
 
+    # ------------------------------------------------------------ ファネル
+    #
+    # ファネルは runReport ではなく runFunnelReport で取る。まだ v1alpha
+    # にしかなく、Python のライブラリからは呼べない。素の HTTP で叩く。
+    # GAS 側も同じ理由で UrlFetchApp を使っている案件が多い。
+    #
+    #   GAS   UrlFetchApp.fetch(".../v1alpha/properties/N:runFunnelReport", ...)
+    #   Python  api.funnel(start, end, [api.funnel_page_step(...), ...])
+    #
+    def funnel(self, start, end, steps) -> list[float]:
+        """ステップごとの人数を、ステップの順に返す。
+
+        `steps` は runFunnelReport の `funnel.steps` に渡すものをそのまま。
+        GAS のコードから写しやすいよう、素の dict を受け取る。
+        """
+        import google.auth
+        import google.auth.transport.requests
+        import requests
+
+        creds, _ = google.auth.default(scopes=SCOPES)
+        creds.refresh(google.auth.transport.requests.Request())
+
+        url = (f"https://analyticsdata.googleapis.com/v1alpha/{self.property}"
+               ":runFunnelReport")
+        last = None
+        for i in range(self.TRIES):
+            res = requests.post(
+                url,
+                headers={"Authorization": f"Bearer {creds.token}"},
+                json={"dateRanges": [{"startDate": start, "endDate": end}],
+                      "funnel": {"isOpenFunnel": False, "steps": steps}},
+                timeout=self.TIMEOUT)
+            if res.status_code == 200:
+                break
+            last = f"{res.status_code}: {res.text[:300]}"
+            # 混み合っているときは待って直す。runReport 側と同じ考え方。
+            if res.status_code not in (429, 500, 503, 504) or i == self.TRIES - 1:
+                raise RuntimeError(f"runFunnelReport が失敗しました（{last}）")
+            wait = 5 * (2 ** i)
+            print(f"      HTTP {res.status_code}。{wait}秒待って"
+                  f"やり直します（{i + 1}/{self.TRIES - 1}）")
+            time.sleep(wait)
+        else:
+            raise RuntimeError(f"runFunnelReport が失敗しました（{last}）")
+
+        # 返り方が2通りある。subReports がある版とない版。
+        tbl = (res.json().get("funnelTable") or {})
+        if tbl.get("subReports"):
+            rows = tbl["subReports"][0].get("rows") or []
+        else:
+            rows = tbl.get("rows") or res.json().get("rows") or []
+        return [float(r["metricValues"][0]["value"]) for r in rows]
+
+    @staticmethod
+    def funnel_step(name: str, expr: dict) -> dict:
+        """ファネルの1ステップ。`expr` は filterExpression の中身。"""
+        return {"name": name, "isDirectlyFollowedBy": False,
+                "filterExpression": expr}
+
+    @staticmethod
+    def funnel_field(field: str, match: str, value: str,
+                     negate: bool = False) -> dict:
+        """1つの項目で絞るステップ条件。`match` は GAS と同じ名前。
+
+            funnel_field("pageLocation", "CONTAINS", "cart_index.html")
+            funnel_field("pageLocation", "FULL_REGEXP", r".*A.*", negate=True)
+        """
+        inner = {"funnelFieldFilter": {
+            "fieldName": field,
+            "stringFilter": {"matchType": match, "value": value}}}
+        return {"notExpression": inner} if negate else inner
+
+    @staticmethod
+    def funnel_event(event_name: str) -> dict:
+        """イベントで絞るステップ条件。"""
+        return {"funnelEventFilter": {"eventName": event_name}}
+
+    @staticmethod
+    def funnel_rates(users) -> list[tuple[float, float | None, float]]:
+        """人数の並びから（人数, 次への率, 通算の率）を作る。
+
+        最後のステップの「次への率」は None。GAS が空欄にしているのに合わせる。
+        """
+        first = users[0] if users else 0.0
+        out = []
+        for i, u in enumerate(users):
+            nxt = (users[i + 1] / u) if (i + 1 < len(users) and u) else None
+            out.append((u, nxt, (u / first) if first else 0))
+        return out
+
 
 # ---------------------------------------------------------------- 絞り込み
 #
