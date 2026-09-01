@@ -211,7 +211,9 @@ def capture(args: argparse.Namespace) -> Path:
             path = tiles_dir / "tile_000.png"
             page.locator(sel).screenshot(path=str(path))
             ctx.close()
-            im = trim_margins(Image.open(path).convert("RGB"))
+            raw = Image.open(path).convert("RGB")
+            detected = trim_bounds(raw)
+            im, used = trim_margins(raw, bounds=parse_trim(args.trim))
             joined = out_dir / f"heatmap_{args.type}_joined.png"
             im.save(joined)
             (out_dir / "capture_meta.json").write_text(
@@ -227,6 +229,8 @@ def capture(args: argparse.Namespace) -> Path:
                     "viewHeightCss": view,
                     "stickyTopCss": 0,
                     "stickyBottomCss": 0,
+                    "trimLeftRight": list(used) if used else None,
+                    "trimDetected": list(detected) if detected else None,
                     "onePiece": True,
                     "tiles": [{"file": path.name, "scrollTop": 0}],
                     "joined": joined.name,
@@ -283,9 +287,10 @@ def capture(args: argparse.Namespace) -> Path:
     sticky_top = resolve(args.sticky_top, "top")
     sticky_bottom = resolve(args.sticky_bottom, "bottom")
 
-    joined = stitch(tiles, total, view, out_dir, args.type,
-                    sticky_css=sticky_top,
-                    sticky_bottom_css=sticky_bottom)
+    joined, used, detected = stitch(tiles, total, view, out_dir, args.type,
+                                    sticky_css=sticky_top,
+                                    sticky_bottom_css=sticky_bottom,
+                                    trim=parse_trim(args.trim))
     meta = {
         "clarityUrl": url,
         "pageUrl": args.page_url,
@@ -298,6 +303,8 @@ def capture(args: argparse.Namespace) -> Path:
         "viewHeightCss": view,
         "stickyTopCss": sticky_top,
         "stickyBottomCss": sticky_bottom,
+        "trimLeftRight": list(used) if used else None,
+        "trimDetected": list(detected) if detected else None,
         "tiles": [{"file": p.name, "scrollTop": t} for p, t in tiles],
         "joined": joined.name,
     }
@@ -362,8 +369,26 @@ def detect_sticky(tiles, view_css: int, side: str) -> int:
     return int(round(n / scale))
 
 
-def trim_margins(im: Image.Image, pad: int = 4) -> Image.Image:
-    """左右の白い余白を落とし、ページ本体だけにする。
+NO_TRIM = "none"       # 「余白を落とさない」の指定
+
+
+def parse_trim(value):
+    """--trim の値を解く。auto なら None（自分で判定させる）。"""
+    if not value or value == "auto":
+        return None
+    if value == NO_TRIM:
+        return NO_TRIM
+    try:
+        left, right = (int(v) for v in str(value).split(","))
+    except ValueError:
+        raise SystemExit(f"--trim の指定が読めません: {value}（「L,R」か auto か none）")
+    if right <= left:
+        raise SystemExit(f"--trim の左右が逆です: {value}")
+    return left, right
+
+
+def trim_bounds(im: Image.Image, pad: int = 4):
+    """ページ本体が写っている左右の位置を返す。切るべきでなければ None。
 
     Clarityは表示領域の中央にページを縮小表示するため、両側に白い帯が残る。
     そのまま資料に貼ると、ページが小さく余白ばかりの図になる。
@@ -371,7 +396,6 @@ def trim_margins(im: Image.Image, pad: int = 4) -> Image.Image:
     「白でない画素が1つでもある列」を探すやり方では切れない。
     枠線やスクロールバーが端に写り込んでいて、端の列も白ではないため。
     **列ごとに中身の割合を見て、その割合が高い列が連続する一番長い区間**を取る。
-    上下は切らない（ページの先頭と末尾は情報として残す）。
     """
     import numpy as np
 
@@ -392,14 +416,35 @@ def trim_margins(im: Image.Image, pad: int = 4) -> Image.Image:
 
     left, right = best
     if right - left < im.width * 0.05:      # 切りすぎは疑わしいのでやめる
-        return im
-    left = max(0, left - pad)
-    right = min(im.width, right + pad)
-    return im.crop((left, 0, right, im.height))
+        return None
+    return max(0, left - pad), min(im.width, right + pad)
+
+
+def trim_margins(im: Image.Image, pad: int = 4, bounds=None):
+    """左右の白い余白を落とし、ページ本体だけにする。上下は切らない。
+
+    `bounds` を渡すと、その左右で切る。**クリックマップとスクロールマップで
+    幅をそろえるために使う。** 同じページ・同じデバイスでも、自動判定に任せると
+    幅が違う画像になってしまう。クリックマップは点が疎で余白と見なされる列が
+    多く、スクロールマップは熱の帯が全幅に及ぶため、判定が食い違う。
+    貼り付く要素の高さと同じく、**クリックマップで決めた値を引き継ぐ**。
+
+    返り値は (画像, 実際に使った左右)。使わなかったときの左右は None。
+    """
+    if bounds == NO_TRIM:
+        return im, None
+    if bounds is None:
+        bounds = trim_bounds(im, pad)
+    if bounds is None:
+        return im, None
+    left, right = bounds
+    left = max(0, min(left, im.width - 1))
+    right = max(left + 1, min(right, im.width))
+    return im.crop((left, 0, right, im.height)), (left, right)
 
 
 def stitch(tiles, total_css: int, view_css: int, out_dir: Path, kind: str,
-           sticky_css: int = 0, sticky_bottom_css: int = 0) -> Path:
+           sticky_css: int = 0, sticky_bottom_css: int = 0, trim=None):
     """scrollTopの実測値をもとに決定的に結合する（画像差分による重なり探索は不要）。
 
     各タイルは scrollTop から view_css 分の内容を写している。
@@ -437,10 +482,13 @@ def stitch(tiles, total_css: int, view_css: int, out_dir: Path, kind: str,
             y += top
         canvas.paste(img, (0, y))
 
-    canvas = trim_margins(canvas)
+    # 自分で判定した左右は、切るかどうかに関わらず必ず控えておく。
+    # 呼び出し側が、クリックとスクロールの判定を持ち寄って決めるため。
+    detected = trim_bounds(canvas)
+    canvas, used = trim_margins(canvas, bounds=trim)
     joined = out_dir / f"heatmap_{kind}_joined.png"
     canvas.save(joined)
-    return joined
+    return joined, used, detected
 
 
 def login(args: argparse.Namespace) -> None:
@@ -538,6 +586,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         default="",
         help="インストール済みブラウザを使う場合に指定（例: chrome）",
     )
+    p.add_argument(
+        "--trim", default="auto",
+        help="左右の余白を落とす位置。既定は auto（自分で判定）。"
+             "「L,R」で明示。クリックマップの値をスクロールマップに"
+             "引き継いで幅をそろえるために使う。"
+             "「none」で余白を落とさない")
     p.add_argument("--window-width", type=int, default=1920)
     p.add_argument("--window-height", type=int, default=1200)
     p.add_argument("--overlap", type=int, default=40, help="タイル間の重なり（CSS px）")
