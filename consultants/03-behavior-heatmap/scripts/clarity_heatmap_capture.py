@@ -40,6 +40,7 @@ import argparse
 import json
 import sys
 import time
+from datetime import date
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
@@ -109,6 +110,49 @@ SET_SCROLL = """
 """
 
 
+def date_params(value: str) -> dict:
+    """期間の指定を、Clarityが受け取る形に直す。
+
+    **月次レポートで「過去30日間」を使ってはいけない。**
+    実行した日から遡るため、暦月とずれる。9月1日に撮れば 8/2〜9/1 になり、
+    8月1日が抜けて9月1日が混ざる。実際にそれで撮ってしまった月がある。
+
+    そこで暦月と任意の範囲を受け取れるようにする。
+    Clarityのカスタム期間は**エポックミリ秒**で渡す（実測で確認。画面の表示が
+    `08/01/2026 00:00 - 08/31/2026 23:59` になる）。
+
+        2026-08                  … その月の1日 00:00 〜 末日 23:59
+        2026-08-01..2026-08-31   … 指定した範囲
+        Last 30 days             … UIの選択肢の文字列。そのまま渡す
+
+    時刻はこのPCの時間帯で解釈する。Clarityの画面も同じ時間帯で表示する。
+    """
+    import re
+    from datetime import datetime, timedelta
+
+    def span(start, end) -> dict:
+        # 終了日はその日を含む。23:59:59 まで取る。
+        s = datetime(start.year, start.month, start.day)
+        e = datetime(end.year, end.month, end.day, 23, 59, 59)
+        return {"date": "Custom",
+                "start": str(int(s.timestamp() * 1000)),
+                "end": str(int(e.timestamp() * 1000))}
+
+    m = re.fullmatch(r"(\d{4})-(\d{2})", value)
+    if m:
+        y, mo = int(m.group(1)), int(m.group(2))
+        first = date(y, mo, 1)
+        nxt = date(y + (mo == 12), (mo % 12) + 1, 1)
+        return span(first, nxt - timedelta(days=1))
+
+    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})", value)
+    if m:
+        return span(date.fromisoformat(m.group(1)),
+                    date.fromisoformat(m.group(2)))
+
+    return {"date": value}
+
+
 def build_url(args: argparse.Namespace) -> str:
     """Clarityヒートマップ画面のURLを組み立てる。
 
@@ -117,7 +161,7 @@ def build_url(args: argparse.Namespace) -> str:
     """
     match_value = args.url_match or args.page_url
     params = {
-        "date": args.date,
+        **date_params(args.date),
         "Device": args.device,
         "heatmapType": HEATMAP_TYPES[args.type],
         # Device はセッションの絞り込み、heatmapDeviceType は
@@ -551,7 +595,12 @@ def parse_args(argv=None) -> argparse.Namespace:
         "--type", default="tap", choices=sorted(HEATMAP_TYPES), help="ヒートマップ種別"
     )
     p.add_argument("--device", default="Mobile", help="Mobile / Desktop / Tablet")
-    p.add_argument("--date", default="Last 30 days", help="期間。UIの選択肢と同じ文字列")
+    p.add_argument(
+        "--date", default="Last 30 days",
+        help="期間。月次レポートでは暦月を渡す（2026-08）。"
+             "任意の範囲は 2026-08-01..2026-08-31。"
+             "UIの選択肢の文字列（Last 30 days など）もそのまま使えるが、"
+             "実行日から遡るため月次には向かない")
     p.add_argument("--out", default="output/clarity_heatmap", help="出力フォルダ")
     p.add_argument(
         "--profile",
