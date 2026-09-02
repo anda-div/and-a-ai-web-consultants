@@ -1,3 +1,5 @@
+**日本語** | [English](README.en.md)
+
 # AIウェブコンサルタント7人体制
 
 ![AIウェブコンサルタント7人](assets/team.png)
