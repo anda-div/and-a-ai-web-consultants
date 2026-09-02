@@ -46,6 +46,125 @@ except ImportError:      # 単体で持ち出したときも動くようにす�
 SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"]
 
 
+# ------------------------------------------------------------ クォータの見張り
+#
+# GA4 Data API は「1時間あたりのトークン」で頭を押さえてくる。案件によっては
+# 月次の取得が数百本になり、**正しく書けていても途中で 429 で止まる**。
+#
+#   Exhausted property tokens for a project per hour.
+#
+# 待てば戻るので、失敗として捨てないこと。残りトークンは応答に入れてもらえる
+# （returnPropertyQuota）ので、それを見て自分で速度を落とす。
+#
+# しきい値を残り 60 にしているのは、1本が十数トークンかかることがあるため。
+# 0 まで使い切ってから待つと、待っている間に他の呼び出しが 429 を踏む。
+
+class Quota:
+    """残りトークンを覚えておき、少なくなったら次の時間帯まで待つ。
+
+    **枠は用途ごとに分かれている。** `runReport` と `runFunnelReport` は
+    別の枠を使い、ふつうはファネル側が先に尽きる。ひとまとめに扱うと、
+    ファネルが尽きただけで runReport まで止まってしまい、進めるはずの
+    シートが進まなくなる。**レーンを分けて数える。**
+    """
+
+    FLOOR = 60          # これを下回ったら待つ
+    NAP = 300           # 待つ長さ（秒）。トークンは1時間未満で戻る
+
+    # 見るバケット。**プロジェクト単位の1時間分がいちばん先に尽きる。**
+    # 「Exhausted property tokens for a project per hour」はこれ。
+    BUCKETS = ("tokensPerProjectPerHour", "tokens_per_project_per_hour",
+               "tokensPerHour", "tokens_per_hour",
+               "tokensPerDay", "tokens_per_day")
+
+    def __init__(self):
+        import threading
+        self.lock = threading.Lock()
+        self.left = {}      # レーン名 -> 直近に見えた残り
+        self.waited = {}
+
+    def update(self, pq, lane="report") -> None:
+        """応答の propertyQuota から、いちばん残りの少ないトークンを覚える。"""
+        if not pq:
+            return
+        vals = []
+        for key in self.BUCKETS:
+            v = pq.get(key) if isinstance(pq, dict) else getattr(pq, key, None)
+            if v is None:
+                continue
+            r = (v.get("remaining") if isinstance(v, dict)
+                 else getattr(v, "remaining", None))
+            if r is not None:
+                vals.append(int(r))
+        if vals:
+            with self.lock:
+                self.left[lane] = min(vals)
+
+    def wait_if_low(self, lane="report", log=print) -> None:
+        while True:
+            with self.lock:
+                left = self.left.get(lane)
+            if left is None or left > self.FLOOR:
+                return
+            log(f"      [{lane}] 残りトークンが {left}。"
+                f"{self.NAP // 60}分待ちます", flush=True)
+            time.sleep(self.NAP)
+            with self.lock:
+                self.left[lane] = None      # 待ったので、次の応答で見直す
+                self.waited[lane] = self.waited.get(lane, 0) + 1
+
+    def exhausted(self, lane="report", log=print) -> None:
+        """429 を踏んだとき。**そのレーンだけ**まとまった時間待つ。"""
+        log(f"      [{lane}] トークンを使い切りました。"
+            f"{self.NAP // 60}分待ちます", flush=True)
+        with self.lock:
+            self.left[lane] = 0
+        time.sleep(self.NAP)
+        with self.lock:
+            self.left[lane] = None
+            self.waited[lane] = self.waited.get(lane, 0) + 1
+
+
+QUOTA = Quota()
+
+
+# ---------------------------------------------------------------- 認証の使い回し
+#
+# ファネルは素の HTTP で叩くため、呼ぶたびに access token が要る。
+# 毎回 refresh すると、月次の取得で数百回の再発行になり、そこだけで数分かかる。
+# 期限が切れるまでは同じものを使い回す。複数スレッドから呼ばれても
+# 一度しか取り直さないよう、鍵をかける。
+
+_CREDS = None
+_CREDS_LOCK = None
+
+
+def _access_token() -> str:
+    """有効な access token を返す（期限が切れていれば取り直す）。"""
+    global _CREDS, _CREDS_LOCK
+    import threading
+
+    import google.auth
+    import google.auth.transport.requests
+
+    if _CREDS_LOCK is None:
+        _CREDS_LOCK = threading.Lock()
+    with _CREDS_LOCK:
+        if _CREDS is None:
+            _CREDS, _ = google.auth.default(scopes=SCOPES)
+        if not _CREDS.valid or _CREDS.expired:
+            _CREDS.refresh(google.auth.transport.requests.Request())
+        return _CREDS.token
+
+
+def _is_number(v) -> bool:
+    try:
+        float(v)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
 # ---------------------------------------------------------------- 丸め
 def js_round(x: float) -> int:
     """JavaScript の Math.round と同じ丸め方。
@@ -118,18 +237,37 @@ class GA4:
         self.client = BetaAnalyticsDataClient()
         self.property = f"properties/{property_id}"
 
+    # クォータ切れは「混んでいる」のとは違い、待つ長さが桁で違う。
+    # 分けて数え、こちらは根気よく待つ。
+    # 月次1回分でファネルを数百本投げると、1時間あたりの枠に何度も当たる。
+    # 5分待ちを何十回か繰り返せるだけの根気を持たせる（= 5時間ぶん）。
+    QUOTA_TRIES = 60
+
     def _call(self, req):
         last = None
-        for i in range(self.TRIES):
+        quota_hits = 0
+        i = 0
+        while True:
+            QUOTA.wait_if_low("report")
             try:
-                return self.client.run_report(req, timeout=self.TIMEOUT)
+                res = self.client.run_report(req, timeout=self.TIMEOUT)
+                QUOTA.update(getattr(res, "property_quota", None), "report")
+                return res
             except Exception as e:
                 last = e
-                if type(e).__name__ not in self.RETRY_ON or i == self.TRIES - 1:
+                name = type(e).__name__
+                if name in ("ResourceExhausted", "TooManyRequests"):
+                    quota_hits += 1
+                    if quota_hits > self.QUOTA_TRIES:
+                        raise
+                    QUOTA.exhausted("report")
+                    continue
+                i += 1
+                if name not in self.RETRY_ON or i >= self.TRIES:
                     raise
-                wait = 5 * (2 ** i)          # 5秒 → 10秒 → 20秒
-                print(f"      {type(e).__name__}。{wait}秒待って"
-                      f"やり直します（{i + 1}/{self.TRIES - 1}）")
+                wait = 5 * (2 ** (i - 1))    # 5秒 → 10秒 → 20秒
+                print(f"      {name}。{wait}秒待って"
+                      f"やり直します（{i}/{self.TRIES - 1}）", flush=True)
                 time.sleep(wait)
         raise last
 
@@ -161,6 +299,7 @@ class GA4:
                 order_bys=order_bys,
                 limit=limit, offset=offset, keep_empty_rows=False,
                 dimension_filter=dimension_filter,
+                return_property_quota=True,
             )
             res = self._call(req)
             rows = list(res.rows)
@@ -192,41 +331,87 @@ class GA4:
     #   GAS   UrlFetchApp.fetch(".../v1alpha/properties/N:runFunnelReport", ...)
     #   Python  api.funnel(start, end, [api.funnel_page_step(...), ...])
     #
-    def funnel(self, start, end, steps) -> list[float]:
+    def funnel(self, start, end, steps, open_funnel: bool = False) -> list[float]:
         """ステップごとの人数を、ステップの順に返す。
 
         `steps` は runFunnelReport の `funnel.steps` に渡すものをそのまま。
         GAS のコードから写しやすいよう、素の dict を受け取る。
         """
-        import google.auth
-        import google.auth.transport.requests
-        import requests
+        return [u for _, u in self.funnel_rows(start, end, steps, open_funnel)]
 
-        creds, _ = google.auth.default(scopes=SCOPES)
-        creds.refresh(google.auth.transport.requests.Request())
+    def funnel_table(self, start, end, steps, *, open_funnel: bool = False,
+                     breakdown: str | None = None,
+                     breakdown_limit: int | None = None
+                     ) -> list[tuple[list[str], float]]:
+        """ファネルの表をそのまま返す（ディメンション値の並び, 人数）。
+
+        `breakdown` を渡すと funnelBreakdown が付き、ステップ×その項目の
+        組み合わせで返る（GAS が `funnelBreakdown` を使っている案件向け）。
+        """
+        return self._funnel_call(start, end, steps, open_funnel,
+                                 breakdown, breakdown_limit)
+
+    def funnel_rows(self, start, end, steps,
+                    open_funnel: bool = False) -> list[tuple[str, float]]:
+        """ステップごとの（名前, 人数）を、ステップの順に返す。
+
+        名前は GA4 が返すディメンション値（「1. トップページ」のように
+        番号が付く）。GAS が出力していたシートに、この名前がそのまま
+        入っている案件があるため、数値だけでは足りない。
+
+        GAS 側の取り出し方に合わせ、ディメンション値のうち
+        「空でない・(not set) でない・数値でない」最初のものを名前に使う。
+        見つからなければ「ステップ N」とする。
+        """
+        out = []
+        for dims, u in self._funnel_call(start, end, steps, open_funnel,
+                                         None, None):
+            name = None
+            for v in dims:
+                if v and v != "(not set)" and not _is_number(v):
+                    name = v
+                    break
+            out.append((name or f"ステップ {len(out) + 1}", u))
+        return out
+
+    def _funnel_call(self, start, end, steps, open_funnel,
+                     breakdown, breakdown_limit):
+        import requests
 
         url = (f"https://analyticsdata.googleapis.com/v1alpha/{self.property}"
                ":runFunnelReport")
+        body = self._funnel_body(start, end, steps, open_funnel,
+                                 breakdown, breakdown_limit)
         last = None
-        for i in range(self.TRIES):
+        quota_hits = 0
+        i = 0
+        while True:
+            QUOTA.wait_if_low("funnel")
+            token = _access_token()
             res = requests.post(
-                url,
-                headers={"Authorization": f"Bearer {creds.token}"},
-                json={"dateRanges": [{"startDate": start, "endDate": end}],
-                      "funnel": {"isOpenFunnel": False, "steps": steps}},
-                timeout=self.TIMEOUT)
+                url, headers={"Authorization": f"Bearer {token}"},
+                json=body, timeout=self.TIMEOUT)
             if res.status_code == 200:
+                try:
+                    QUOTA.update(res.json().get("propertyQuota"), "funnel")
+                except Exception:
+                    pass
                 break
             last = f"{res.status_code}: {res.text[:300]}"
-            # 混み合っているときは待って直す。runReport 側と同じ考え方。
-            if res.status_code not in (429, 500, 503, 504) or i == self.TRIES - 1:
+            if res.status_code == 429:
+                # クォータ切れ。待てば戻るので、失敗にしない。
+                quota_hits += 1
+                if quota_hits > self.QUOTA_TRIES:
+                    raise RuntimeError(f"runFunnelReport が失敗しました（{last}）")
+                QUOTA.exhausted("funnel")
+                continue
+            i += 1
+            if res.status_code not in (500, 503, 504) or i >= self.TRIES:
                 raise RuntimeError(f"runFunnelReport が失敗しました（{last}）")
-            wait = 5 * (2 ** i)
+            wait = 5 * (2 ** (i - 1))
             print(f"      HTTP {res.status_code}。{wait}秒待って"
-                  f"やり直します（{i + 1}/{self.TRIES - 1}）")
+                  f"やり直します（{i}/{self.TRIES - 1}）", flush=True)
             time.sleep(wait)
-        else:
-            raise RuntimeError(f"runFunnelReport が失敗しました（{last}）")
 
         # 返り方が2通りある。subReports がある版とない版。
         tbl = (res.json().get("funnelTable") or {})
@@ -234,7 +419,26 @@ class GA4:
             rows = tbl["subReports"][0].get("rows") or []
         else:
             rows = tbl.get("rows") or res.json().get("rows") or []
-        return [float(r["metricValues"][0]["value"]) for r in rows]
+        out = []
+        for r in rows:
+            dims = [dv.get("value") for dv in (r.get("dimensionValues") or [])]
+            mv = r.get("metricValues") or []
+            out.append((dims, float(mv[0]["value"]) if mv else 0.0))
+        return out
+
+    @staticmethod
+    def _funnel_body(start, end, steps, open_funnel, breakdown, limit):
+        body = {"dateRanges": [{"startDate": start, "endDate": end}],
+                "funnel": {"isOpenFunnel": bool(open_funnel), "steps": steps},
+                # 残りトークンを返してもらう。これが無いと、こちらから
+                # 速度を落としようがなく 429 を踏み続けることになる。
+                "returnPropertyQuota": True}
+        if breakdown:
+            bd = {"breakdownDimension": {"name": breakdown}}
+            if limit:
+                bd["limit"] = limit
+            body["funnelBreakdown"] = bd
+        return body
 
     @staticmethod
     def funnel_step(name: str, expr: dict) -> dict:
