@@ -16,6 +16,9 @@
     1. 紛れ込んだごみファイルがないか（check_stray_files.py）
     2. 値がありえない状態になっていないか（check_values.py）
     3. 体裁が崩れていないか（check_layout.py）
+       --prev を渡すと、**前月の納品ファイルを正とする。** 前月に同じ形で
+       在った指摘は要対応にせず「前月と同じ」として記録に残す。前月より
+       乱れたもの（重なりが大きくなった・件数が増えた・前月に無かった）だけを拾う。
     4. 3つとも要対応0なら、納品フォルダへ「納品)<名前>_<日時>.pptx」で複製する
     5. 何を検査して通ったかを、同名の .check.txt に残す（納品後に問われたときの証拠）
 
@@ -57,7 +60,9 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="納品ファイルを置くフォルダ")
     ap.add_argument("--name", default="月次レポート", help="納品名の本体。既定「月次レポート」")
     ap.add_argument("--period", help="対象月 2026-08（値の検査に渡す）")
-    ap.add_argument("--prev", help="前月の納品ファイル（値の検査に渡す）")
+    ap.add_argument("--prev",
+                    help="前月の納品ファイル。値の検査（前月との比較）と、"
+                         "体裁の検査（前月より乱れていないかの基準）に渡す")
     ap.add_argument("--stray-dir", help="ごみファイルを探すフォルダ。既定は pptx のあるフォルダの親")
     ap.add_argument("--force", action="store_true",
                     help="要対応があっても納品する。その事実は記録に残る")
@@ -74,10 +79,19 @@ def main() -> int:
     if a.prev:
         values_args += ["--prev", a.prev]
 
+    # 体裁は前月の納品ファイルを基準にする。毎月同じ土台から作る資料には、
+    # 図の作りそのものに由来する重なりが残る（フロー図の矢印ラベルは、上下
+    # いっぱいに伸びた列の上に置くのが図の作りで、どこへ置いても列と交差する）。
+    # それを毎月直させても意味がないので、**前月より乱れたかどうか**を見る。
+    # 前月より大きくなったもの・増えたもの・前月に無かったものは要対応のまま。
+    layout_args = [a.pptx]
+    if a.prev:
+        layout_args += ["--baseline", a.prev]
+
     steps = [
         ("ごみファイル", "check_stray_files.py", [stray_dir]),
         ("値",           "check_values.py",      values_args),
-        ("体裁",         "check_layout.py",      [a.pptx]),
+        ("体裁",         "check_layout.py",      layout_args),
     ]
 
     log = [f"納品ゲート  {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
