@@ -22,6 +22,25 @@
     解説と画面が食い違っていないか、数値の意味が正しいか、
     言い過ぎていないか、宛先・日付が正しいか。
 
+前月の納品ファイルを基準にする（--baseline）
+
+    毎月同じ土台から作る資料には、**図の作りそのものに由来する重なり**が
+    残る。たとえばフロー図の矢印ラベルは、上下いっぱいに伸びた列の上に
+    置くのが図の作りで、どこへ置いても列と辺が交差する。位置を直すと図が壊れる。
+
+    そういうものを毎月直させても意味がない。そこで
+
+        python check_layout.py 当月.pptx --baseline "納品)前月.pptx"
+
+    とすると、**前月の納品ファイルに同じ形で在ったものは要対応にしない。**
+    「前月と同じ」として理由付きで一覧に出し、記録には残す。
+
+    見るのは**前月より乱れたかどうか**である。同じ図形の組み合わせでも
+    重なりが前月より大きくなっていれば、要対応として拾う。
+    件数が増えていても拾う。前月に無かったものは、当然拾う。
+
+    前月のファイルを渡さなければ、これまでどおり全件を要対応にする。
+
 終了コードは、重大な指摘が1件でもあれば 1、無ければ 0。
 """
 from __future__ import annotations
@@ -214,16 +233,88 @@ def control_chars(path: str) -> list[tuple[int, str, str, str]]:
     return out
 
 
+class Baseline:
+    """前月の納品ファイルに在った指摘。ここに在るものは要対応にしない。
+
+    突き合わせるのは**ページ番号ではなく図形の名前**である。差し込みページで
+    番号がずれても、同じ形の組み合わせなら同じものとして扱える。
+
+    同じ組み合わせでも、前月より重なりが大きくなっていれば拾う。
+    件数が前月より増えていれば、増えたぶんを拾う。
+    「前月と同じなら通す」であって「一度許したら以後は見ない」ではない。
+    """
+
+    # 前月より悪くなったと見なす余裕。測り方の丸めぶんは許す。
+    SLACK_RATIO = 1.10
+    SLACK_ABS = 0.05
+
+    def __init__(self, marks=None, path=None):
+        self.marks = marks or {}          # 印 -> [ひどさ, ...]（大きい順）
+        self.path = path
+        self.used = {}                    # 印 -> 使った数
+
+    @classmethod
+    def load(cls, path, **opts):
+        """前月のファイルに同じ検査を当てて、指摘の印を集める。"""
+        if not path:
+            return cls()
+        _major, _minor, _same, marks = check(path, baseline=None, **opts)
+        got = {}
+        for mark, harm in marks:
+            got.setdefault(mark, []).append(harm)
+        for v in got.values():
+            v.sort(reverse=True)
+        return cls(got, path)
+
+    def allows(self, mark, harm) -> tuple[bool, str]:
+        """前月に在ったものか。在れば (True, 一言) を返す。
+
+        「ひどさ」の単位は指摘の種類によって違う（重なりは c㎡、枠外は cm、
+        画像のゆがみは縦横比の差）。数を出すのは**前月より悪くなったとき**に
+        限る。同じときに数を並べると、本文の寸法と混ざって読みにくい。
+        """
+        had = self.marks.get(mark)
+        if not had:
+            return False, ""
+        i = self.used.get(mark, 0)
+        if i >= len(had):
+            return False, f"前月は同じものが {len(had)} 件、当月はそれより多い"
+        was = had[i]
+        if harm > was * self.SLACK_RATIO + self.SLACK_ABS:
+            return False, (f"前月より大きくなった: ひどさ {was:.2f} → {harm:.2f}")
+        self.used[mark] = i + 1
+        return True, "前月にも同じ形の指摘がある"
+
+
 def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
           summary_prefix: str, margin: float,
-          strict: bool = False) -> tuple[list, list]:
+          strict: bool = False, baseline: "Baseline | None" = None
+          ) -> tuple[list, list, list, list]:
+    """指摘を返す。
+
+    戻り値は (要対応, 確認, 前月と同じ, 印の一覧)。
+    「印の一覧」は前月のファイルを基準にするときに使う。
+    """
     prs = Presentation(path)
     SW, SH = cm(prs.slide_width), cm(prs.slide_height)
-    major, minor = [], []
+    major, minor, same, marks = [], [], [], []
+
+    def note(n, kind, label, detail, ident, harm):
+        """要対応の候補を1件記録する。前月に在ったものは「前月と同じ」へ回す。"""
+        mark = (kind, ident)
+        marks.append((mark, harm))
+        if baseline is not None:
+            ok, why = baseline.allows(mark, harm)
+            if ok:
+                same.append((n, kind, label, f"{detail}／{why}"))
+                return
+            if why:
+                detail = f"{detail}（{why}）"
+        major.append((n, kind, label, detail))
 
     # 描画するまで見えないため、最初に拾っておく
     for n, kind, label, detail in control_chars(path):
-        major.append((n, kind, label, detail))
+        note(n, kind, label, detail, label, 1.0)
 
     for n, slide in enumerate(prs.slides, 1):
         shapes = collect(slide, n)
@@ -260,9 +351,11 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
                 small = min(a.tw * a.th, b.tw * b.th)
                 if small <= 0 or area / small < 0.08:
                     continue
-                major.append((n, "重なり",
-                              f"{a.label} × {b.label}",
-                              f"{ow:.2f} × {oh:.2f} cm 重複"))
+                note(n, "重なり",
+                     f"{a.label} × {b.label}",
+                     f"{ow:.2f} × {oh:.2f} cm 重複",
+                     frozenset((a.raw.name or "", b.raw.name or "")),
+                     ow * oh)
 
         # ---------------------------------------------------- 枠外
         for s in shapes:
@@ -270,7 +363,8 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
                 continue
             if s.x < -margin or s.y < -margin or s.right > SW + margin or s.bottom > SH + margin:
                 over = max(-s.x, -s.y, s.right - SW, s.bottom - SH)
-                major.append((n, "枠外", s.label, f"{over:.2f} cm はみ出し"))
+                note(n, "枠外", s.label, f"{over:.2f} cm はみ出し",
+                     s.raw.name or "", over)
 
         # ---------------------------------------------------- 画像
         pics = [s for s in shapes if s.is_picture]
@@ -294,16 +388,20 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
                 want, got = eh / ew, s.h / s.w
                 if want and abs(want - got) / want > 0.02:
                     crop = "（切り抜きあり）" if (cl or cr or ct or cb) else ""
-                    major.append((n, "画像のゆがみ", s.label,
-                                  f"本来 {want:.2f} → 配置 {got:.2f}{crop}"))
+                    note(n, "画像のゆがみ", s.label,
+                         f"本来 {want:.2f} → 配置 {got:.2f}{crop}",
+                         s.raw.name or "", abs(want - got) / want)
             # 幅が狭いだけでは足りない。小さなアイコンは狭くて当然である。
             # 「縦に長いページ全体を1枚で貼ったため細くなった」ものだけを拾う。
             tall = (s.h / s.w) >= 2.0
             if s.w < min_img_w and tall and not split_layout:
-                bucket = major if s.w < min_img_w / 2 else minor
-                bucket.append((n, "細い画像", s.label,
-                               f"幅 {s.w:.1f} cm（縦横比 {s.h / s.w:.1f}:1）。"
-                               "解説で触れた箇所を切り出してから貼る"))
+                detail = (f"幅 {s.w:.1f} cm（縦横比 {s.h / s.w:.1f}:1）。"
+                          "解説で触れた箇所を切り出してから貼る")
+                if s.w < min_img_w / 2:
+                    note(n, "細い画像", s.label, detail,
+                         s.raw.name or "", s.h / s.w)
+                else:
+                    minor.append((n, "細い画像", s.label, detail))
 
         # ---------------------------------------------------- 文字サイズ
         # 注記（要約枠より下の帯）は小さくてよい。本文だけを見る。
@@ -339,13 +437,14 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
                     minor.append((n, "下が空いている", "",
                                   f"{gap:.1f} cm。行を増やす／要素を大きくする／解釈を足す"))
 
-    return major, minor
+    return major, minor, same, marks
 
 
-def report(path: str, major: list, minor: list) -> int:
+def report(path: str, major: list, minor: list, same: list | None = None) -> int:
     name = os.path.basename(path)
     print(f"■ {name}")
-    for title, items in (("要対応", major), ("確認", minor)):
+    for title, items in (("要対応", major), ("確認", minor),
+                         ("前月と同じ", same or [])):
         if not items:
             continue
         print(f"\n【{title}】{len(items)} 件")
@@ -354,10 +453,13 @@ def report(path: str, major: list, minor: list) -> int:
             print(f"{head:<22} {detail}")
             if label:
                 print(f"{'':<22} {label}")
-    if not major and not minor:
+    if not major and not minor and not same:
         print("  指摘はありません。")
     elif not major:
-        print(f"\n要対応はありません（確認 {len(minor)} 件）。")
+        tail = f"確認 {len(minor)} 件"
+        if same:
+            tail += f" / 前月と同じ {len(same)} 件"
+        print(f"\n要対応はありません（{tail}）。")
     print()
     return 1 if major else 0
 
@@ -380,7 +482,27 @@ def main() -> int:
                     help="枠外判定の許容量(cm)。既定 0.02")
     ap.add_argument("--summary-prefix", default="【このページの要約】",
                     help="要約枠の書き出し。下の空きの判定に使う")
+    ap.add_argument("--baseline",
+                    help="前月の納品ファイル。ここに同じ形で在った指摘は"
+                         "要対応にせず「前月と同じ」として出す。前月より"
+                         "重なりが大きくなったもの・件数が増えたもの・"
+                         "前月に無かったものは、これまでどおり要対応にする")
     a = ap.parse_args()
+
+    opts = dict(max_gap=a.max_gap, min_pt=a.min_pt,
+                min_img_w=a.min_img_width,
+                summary_prefix=a.summary_prefix, margin=a.margin,
+                strict=a.strict_overlap)
+
+    base = None
+    if a.baseline:
+        if not os.path.exists(a.baseline):
+            print(f"前月のファイルがありません: {a.baseline}")
+            return 1
+        base = Baseline.load(a.baseline, **opts)
+        n_base = sum(len(v) for v in base.marks.values())
+        print(f"基準: {os.path.basename(a.baseline)}（指摘 {n_base} 件）")
+        print()
 
     rc = 0
     for p in a.pptx:
@@ -388,11 +510,10 @@ def main() -> int:
             print(f"ファイルがありません: {p}")
             rc = 1
             continue
-        major, minor = check(p, max_gap=a.max_gap, min_pt=a.min_pt,
-                             min_img_w=a.min_img_width,
-                             summary_prefix=a.summary_prefix, margin=a.margin,
-                             strict=a.strict_overlap)
-        rc |= report(p, major, minor)
+        if base is not None:
+            base.used = {}          # ファイルごとに数え直す
+        major, minor, same, _marks = check(p, baseline=base, **opts)
+        rc |= report(p, major, minor, same)
     return rc
 
 

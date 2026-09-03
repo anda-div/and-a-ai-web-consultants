@@ -51,11 +51,25 @@ def kinds(items, page=None):
     return {k for n, k, _, _ in items if page is None or n == page}
 
 
+def opts_of(**kw):
+    o = dict(max_gap=3.0, min_pt=6.0, min_img_w=5.0,
+             summary_prefix=SUMMARY, margin=0.02)
+    o.update(kw)
+    return o
+
+
 def run_check(path, **kw):
-    opts = dict(max_gap=3.0, min_pt=6.0, min_img_w=5.0,
-                summary_prefix=SUMMARY, margin=0.02)
-    opts.update(kw)
-    return check_layout.check(path, **opts)
+    """(要対応, 確認) を返す。前月比の分は run_check3 で見る。"""
+    major, minor, _same, _marks = check_layout.check(path, **opts_of(**kw))
+    return major, minor
+
+
+def run_check3(path, baseline=None, **kw):
+    """(要対応, 確認, 前月と同じ) を返す。"""
+    o = opts_of(**kw)
+    base = check_layout.Baseline.load(baseline, **o) if baseline else None
+    major, minor, same, _marks = check_layout.check(path, baseline=base, **o)
+    return major, minor, same
 
 
 @unittest.skipUnless(READY, "python-pptx / Pillow が無い環境のため飛ばす")
@@ -190,6 +204,78 @@ class CheckLayoutTest(unittest.TestCase):
             prs.save(p)
             major, minor = run_check(p, max_gap=99.0)
             self.assertNotIn("細い画像", kinds(major) | kinds(minor))
+
+
+@unittest.skipUnless(READY, "python-pptx / Pillow が無い環境のため飛ばす")
+class BaselineTest(unittest.TestCase):
+    """前月の納品ファイルを基準にする（--baseline）
+
+    毎月同じ土台から作る資料には、図の作りそのものに由来する重なりが残る。
+    それを毎月直させても意味がない。**前月より乱れたかどうか**を見る。
+    ただし「一度許したら以後は見ない」ではいけないので、
+    大きくなったもの・増えたもの・新しく出たものは拾えることを確かめる。
+    """
+
+    @staticmethod
+    def deck(path, boxes):
+        prs = Presentation()
+        prs.slide_width = Cm(33.87)
+        prs.slide_height = Cm(19.05)
+        s = prs.slides.add_slide(prs.slide_masters[0].slide_layouts[6])
+        for x, y, w, h, text in boxes:
+            sh = s.shapes.add_shape(MSO_SHAPE.RECTANGLE,
+                                    Cm(x), Cm(y), Cm(w), Cm(h))
+            sh.text_frame.paragraphs[0].add_run().text = text
+            sh.name = text        # 形の名前で突き合わせるため、名前を固定する
+        prs.save(path)
+        return path
+
+    # 辺が交差する重なり。内包ではないので、通常は要対応になる。
+    PREV = [(2.0, 2.0, 8.0, 3.0, "帯A"), (8.0, 4.0, 8.0, 3.0, "札B")]
+
+    def test_前月と同じ重なりは要対応にしない(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self.deck(os.path.join(d, "prev.pptx"), self.PREV)
+            cur = self.deck(os.path.join(d, "cur.pptx"), self.PREV)
+            major, _minor, same = run_check3(cur, baseline=base, max_gap=99.0)
+            self.assertNotIn("重なり", kinds(major))
+            self.assertIn("重なり", kinds(same))
+
+    def test_前月より大きくなった重なりは要対応にする(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self.deck(os.path.join(d, "prev.pptx"), self.PREV)
+            worse = [(2.0, 2.0, 8.0, 3.0, "帯A"),
+                     (4.0, 3.0, 8.0, 3.0, "札B")]      # 重なりを広げる
+            cur = self.deck(os.path.join(d, "cur.pptx"), worse)
+            major, _minor, same = run_check3(cur, baseline=base, max_gap=99.0)
+            self.assertIn("重なり", kinds(major))
+            self.assertNotIn("重なり", kinds(same))
+
+    def test_前月に無かった重なりは要対応にする(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self.deck(os.path.join(d, "prev.pptx"),
+                             [(2.0, 2.0, 8.0, 3.0, "帯A")])
+            cur = self.deck(os.path.join(d, "cur.pptx"), self.PREV)
+            major, _minor, same = run_check3(cur, baseline=base, max_gap=99.0)
+            self.assertIn("重なり", kinds(major))
+            self.assertNotIn("重なり", kinds(same))
+
+    def test_件数が増えたぶんは要対応にする(self):
+        with tempfile.TemporaryDirectory() as d:
+            base = self.deck(os.path.join(d, "prev.pptx"), self.PREV)
+            more = self.PREV + [(20.0, 2.0, 8.0, 3.0, "帯A"),
+                                (26.0, 4.0, 8.0, 3.0, "札B")]
+            cur = self.deck(os.path.join(d, "cur.pptx"), more)
+            major, _minor, same = run_check3(cur, baseline=base, max_gap=99.0)
+            self.assertIn("重なり", kinds(major))
+            self.assertIn("重なり", kinds(same))
+
+    def test_前月を渡さなければこれまでどおり全件を要対応にする(self):
+        with tempfile.TemporaryDirectory() as d:
+            cur = self.deck(os.path.join(d, "cur.pptx"), self.PREV)
+            major, _minor, same = run_check3(cur, max_gap=99.0)
+            self.assertIn("重なり", kinds(major))
+            self.assertEqual(same, [])
 
 
 if __name__ == "__main__":
