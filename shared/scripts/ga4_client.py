@@ -331,6 +331,20 @@ class GA4:
     #   GAS   UrlFetchApp.fetch(".../v1alpha/properties/N:runFunnelReport", ...)
     #   Python  api.funnel(start, end, [api.funnel_page_step(...), ...])
     #
+    # ★ 対応しているのは funnelBreakdown だけで、segments は組んでいない。
+    #
+    # 「ある行動をしたセッションの数」のような**セッション単位の集合**は、
+    # runReport の dimensionFilter では取れない。イベント単位で評価されるため、
+    # eventName と pageLocation の AND は必ず 0 になる。
+    # runFunnelReport の segments はセッション単位に対応しているが、ここでは未実装。
+    # **代わりに、その条件をステップ1に置く**（2段のファネルにする）ことで足りる。
+    #
+    # ただし、ファネルで取れるのは人数・セッション数であって**収益ではない**。
+    # 収益がセッション単位で必要なときは、まず item スコープで表せるかを考える
+    # （itemRevenue を itemBrand / itemName で絞り、eventName を混ぜない。
+    #   混ぜると「dimensions and metrics are incompatible」になる）。
+    # 商品属性では表せず、行動でしか定義できない集合の収益は、APIでは取れない。
+    #
     def funnel(self, start, end, steps, open_funnel: bool = False) -> list[float]:
         """ステップごとの人数を、ステップの順に返す。
 
