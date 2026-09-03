@@ -10,6 +10,9 @@
 
 1. 利用者が指定した `consultants/<JOB>/AGENTS.md` と `JOB.md` を読む。
 2. `shared/QUALITY_POLICY.md` を読む。
+   **`shared/scripts/` と `shared/` の md も一覧しておく。** データの取得部品は
+   JOBの下ではなく `shared/` にある。JOBの `scripts/` だけを見て「無い」と
+   判断しないこと（実際に起きた。GAS取得を見て「取得はGASのみ」と結論した）。
 3. 入力ファイル、対象期間、対象サイト、納品形式を確認する。
 4. 不足情報があっても進められる部分は進め、不足箇所は「未検証」と明記する。
 

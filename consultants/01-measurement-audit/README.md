@@ -18,6 +18,24 @@ GA4の数字を読む前に、「その数字を生んだ計測器が正常か�
 - 生データなしで「正しい」と断定すること
 - 監査と同時にレポートを修正すること
 
+> ### データの取得は `shared/` にあります
+>
+> このJOBの `scripts/` は計測設定と実装の**監査**を行うもの（GTM・GA4設定の点検）です。**GA4・Search Console からのデータ取得は
+> [`shared/scripts/ga4_client.py`](../../shared/scripts/) を使ってください。**
+> ここに取得スクリプトを新しく書くと、共通部品と二重管理になります。
+>
+> | やりたいこと | 見る場所 |
+> |---|---|
+> | GA4からPythonで取得する | [`shared/GA4_LOCAL_FETCH.md`](../../shared/GA4_LOCAL_FETCH.md) |
+> | Search Consoleから取得する | [`shared/SEARCH_CONSOLE_LOCAL_FETCH.md`](../../shared/SEARCH_CONSOLE_LOCAL_FETCH.md) |
+> | 認証が通っているか確かめる | `python shared/scripts/ga4_client.py` |
+> | 証明書エラーで止まった | [`shared/TLS_INSPECTION.md`](../../shared/TLS_INSPECTION.md) |
+> | GASで回している案件を移す | [`shared/PORTING_RUNBOOK.md`](../../shared/PORTING_RUNBOOK.md) |
+>
+> `shared/scripts/ga4_client.py` が持つもの: 認証、ページ送り、504の待ち直し、
+> トークン枠の自動待機、GASと一致する丸め、`runFunnelReport`（breakdown 対応）、
+> GASのJSONと同じ形で書ける絞り込み、xlsx出力と全セル照合。
+
 ## 入力
 
 - 監査対象のPPTX、PDFまたはDOCX
