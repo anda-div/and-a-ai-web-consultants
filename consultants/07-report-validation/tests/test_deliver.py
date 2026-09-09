@@ -15,15 +15,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(ROOT, "scripts")
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
+sys.path.insert(0, SCRIPTS)
+
 try:
     from pptx import Presentation  # noqa: F401
     from test_check_values import deck
+    import deliver
     READY = True
 except ImportError:
     READY = False
 
 
 def gate(pptx, out, *extra):
+    """既定では --no-measure。PowerPoint のある PC でしか通らないテストにしない。
+
+    実測そのもの（measure_text.ps1）は PowerPoint に依存するため、ここでは
+    「飛ばしたことが記録に残るか」だけを確かめる。
+    """
+    if "--measure" in extra:
+        extra = tuple(x for x in extra if x != "--measure")
+    else:
+        extra = tuple(extra) + ("--no-measure",)
     cmd = [sys.executable, os.path.join(SCRIPTS, "deliver.py"), pptx,
            "--out", out, "--stray-dir", out] + list(extra)
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8",
@@ -63,6 +75,31 @@ class TestDeliver(unittest.TestCase):
         rec = [f for f in os.listdir(self.out) if f.endswith(".check.txt")][0]
         with open(os.path.join(self.out, rec), encoding="utf-8") as f:
             self.assertIn("--force", f.read())
+
+    def test_実測を飛ばしたら記録に残る(self):
+        """「測っていない」を「問題なし」にしない。"""
+        p = deck([("t", ["集計期間: 2026/08/01〜08/31"], None)])
+        rc, out = gate(p, self.out)
+        self.assertEqual(rc, 0, out)
+        rec = [f for f in os.listdir(self.out) if f.endswith(".check.txt")][0]
+        with open(os.path.join(self.out, rec), encoding="utf-8") as f:
+            self.assertIn("文字の実測を行っていない", f.read())
+
+    def test_実測が失敗しても要対応にしない(self):
+        """4つめの検査（PowerPoint）の不調で、既存3検査の判定を巻き添えにしない。
+
+        COM は落ちる。確認の窓が出て止まることもある。それは「はみ出しがある」
+        という意味ではない。0（なし）と 1（あり）以外は**測れなかった**として扱い、
+        納品ゲートは飛ばした事実だけを記録する。
+        """
+        if not deliver.powershell():
+            self.skipTest("PowerShell が無い環境のため飛ばす")
+        with tempfile.TemporaryDirectory() as d:
+            stub = os.path.join(d, "こわれた検査.ps1")
+            with open(stub, "w", encoding="utf-8-sig") as f:
+                f.write("Write-Output '測れませんでした'\nexit 99\n")
+            rc, out = deliver.run_ps(stub, [])
+            self.assertEqual(rc, deliver.CANNOT_MEASURE, out)
 
     def test_missing_file(self):
         rc, _ = gate(os.path.join(self.out, "nothing.pptx"), self.out)

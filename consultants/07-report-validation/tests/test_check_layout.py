@@ -11,7 +11,12 @@
 
 ゆるめすぎれば、何も報告しない検査になる。
 **通っても意味のない検査**にしないため、わざと壊したファイルを作り、
-6種類の欠陥それぞれを拾えることを確かめる。
+8種類の欠陥それぞれを拾えることを確かめる。
+
+文字のはみ出しについては、**丸めた値では原理的に検出できない**という事故があった。
+枠の高さで丸めた文字高さしか持っていなかったため、「文字が枠より高い」が
+常に偽になっていた。93ページの資料で32件のはみ出しが「要対応 0 件」で通り、
+納品後に目視で見つかっている。ここは丸める前の高さで見ていることを確かめる。
 
     python tests/test_check_layout.py
 
@@ -41,9 +46,11 @@ SUMMARY = "【このページの要約】"
 def textbox(slide, x, y, w, h, text, size=12):
     t = slide.shapes.add_textbox(Cm(x), Cm(y), Cm(w), Cm(h))
     t.text_frame.word_wrap = True
-    r = t.text_frame.paragraphs[0].add_run()
-    r.text = text
-    r.font.size = Pt(size)
+    for i, line in enumerate(text.split("\n")):
+        par = t.text_frame.paragraphs[0] if i == 0 else t.text_frame.add_paragraph()
+        r = par.add_run()
+        r.text = line
+        r.font.size = Pt(size)
     return t
 
 
@@ -53,7 +60,7 @@ def kinds(items, page=None):
 
 def opts_of(**kw):
     o = dict(max_gap=3.0, min_pt=6.0, min_img_w=5.0,
-             summary_prefix=SUMMARY, margin=0.02)
+             summary_prefix=SUMMARY, margin=0.02)   # text_slack は既定を使う
     o.update(kw)
     return o
 
@@ -118,7 +125,25 @@ class CheckLayoutTest(unittest.TestCase):
         textbox(s, 2.0, 5.0, 20.0, 2.0, "> python _scripts\report\build_x.py")
         textbox(s, 1.15, 16.6, 25.2, 1.0, SUMMARY + " 制御文字")
 
-        # 6 内容が上半分で終わる
+        # 6 文字が枠からあふれる（枠は小さいまま、文章だけが長い）
+        s = prs.slides.add_slide(blank)
+        textbox(s, 2.0, 3.0, 10.0, 1.2,
+                "枠の高さは1.2cmしかないのに、9ポイントの日本語を"
+                "何行も入れているため、文字は枠の下へ流れ出す。"
+                "PowerPointは開いただけでは枠を計算し直さないので、"
+                "座標だけを見ていると収まっているように見える。", size=9)
+        textbox(s, 1.15, 16.6, 25.2, 1.0, SUMMARY + " 文字あふれ")
+
+        # 7 文字がスライドの下端を越える
+        s = prs.slides.add_slide(blank)
+        textbox(s, 2.0, 17.4, 10.0, 1.0,
+                "スライドの下端まで1.6cmしかない位置に、9ポイントの本文を"
+                "何行も入れている。枠そのものは用紙の中に収まっているため、"
+                "図形の座標だけを見ていても分からない。だが折り返した文字は"
+                "枠の下へ流れ出し、その下端は用紙の外へ出てしまう。"
+                "印刷しても画面で見ても、最後の行は読めない。", size=9)
+
+        # 8 内容が上半分で終わる
         s = prs.slides.add_slide(blank)
         textbox(s, 2.0, 2.5, 12.0, 1.0, "内容はここで終わり")
         textbox(s, 1.15, 16.6, 25.2, 1.0, SUMMARY + " 下の空き")
@@ -147,8 +172,15 @@ class CheckLayoutTest(unittest.TestCase):
     def test_制御文字を拾う(self):
         self.assertIn("制御文字", kinds(self.major, 5))
 
+    def test_文字が枠からあふれるのを拾う(self):
+        """枠の高さで丸めた値しか持たないと、これは原理的に検出できない。"""
+        self.assertIn("文字あふれ", kinds(self.major, 6))
+
+    def test_文字が用紙の外へ出るのを拾う(self):
+        self.assertIn("文字が用紙の外", kinds(self.major, 7))
+
     def test_下の空きを拾う(self):
-        self.assertIn("下が空いている", kinds(self.minor, 6))
+        self.assertIn("下が空いている", kinds(self.minor, 8))
 
     def test_要対応があれば終了コードは1(self):
         self.assertEqual(check_layout.report("broken.pptx", self.major,
@@ -170,6 +202,75 @@ class CheckLayoutTest(unittest.TestCase):
             prs.save(p)
             major, _ = run_check(p, max_gap=99.0)
             self.assertNotIn("重なり", kinds(major))
+
+    def test_枠に収まっている文字は指摘しない(self):
+        """溢れを拾うために推定をきつくすると、収まっている文字まで拾う。
+
+        行の高さは PowerPoint に実測して フォントサイズ × 1.2 と決めた。
+        1.35 のような大きめの値を使うと、ここが落ちる。
+        """
+        with tempfile.TemporaryDirectory() as d:
+            prs = Presentation()
+            prs.slide_width = Cm(27.52)
+            prs.slide_height = Cm(19.05)
+            s = prs.slides.add_slide(prs.slide_masters[0].slide_layouts[6])
+            # 9pt を3行。行の高さは 9 × 1.2 = 10.8pt = 0.381cm。3行で 1.14cm
+            textbox(s, 2.0, 3.0, 10.0, 1.6,
+                    "一行目の日本語\n二行目の日本語\n三行目の日本語", size=9)
+            p = os.path.join(d, "fit.pptx")
+            prs.save(p)
+            major, minor = run_check(p, max_gap=99.0)
+            self.assertNotIn("文字あふれ", kinds(major) | kinds(minor))
+
+    def test_文字サイズはレイアウトから継ぐ(self):
+        """図形に書いていない文字サイズを既定値で埋めると、見積もりが外れる。
+
+        実案件では、レイアウト側で 26.25pt と決まっている見出しのプレースホルダーを
+        18pt とみなしたために、はみ出していた枠の半分を取りこぼしていた。
+        """
+        with tempfile.TemporaryDirectory() as d:
+            prs = Presentation()
+            prs.slide_width = Cm(27.52)
+            prs.slide_height = Cm(19.05)
+            layout = prs.slide_masters[0].slide_layouts[1]   # タイトルと本文
+            s = prs.slides.add_slide(layout)
+            body = s.placeholders[1]
+            body.width, body.height = Cm(20.0), Cm(1.0)
+            body.top, body.left = Cm(3.0), Cm(2.0)
+            body.text_frame.word_wrap = True
+            # 文字サイズを書かない。レイアウトの既定（既定テンプレートでは32pt）を継ぐ
+            body.text_frame.paragraphs[0].add_run().text = "本文の一行目"
+            p = os.path.join(d, "inherit.pptx")
+            prs.save(p)
+            major, _ = run_check(p, max_gap=99.0)
+            self.assertIn("文字あふれ", kinds(major))
+
+    def test_はみ出しは前月と同じでも要対応にする(self):
+        """溢れた文字に「そう作った」は無い。前月ゆずりで通してはいけない。
+
+        重なりは図の作りに由来することがあるので前月を基準にする。
+        だが文字のはみ出しを前月ゆずりで通すと、一度溢れたものが毎月通り続ける。
+        """
+        def deck(path):
+            prs = Presentation()
+            prs.slide_width = Cm(27.52)
+            prs.slide_height = Cm(19.05)
+            s = prs.slides.add_slide(prs.slide_masters[0].slide_layouts[6])
+            t = textbox(s, 2.0, 3.0, 10.0, 1.0,
+                        "枠に対して文章が長すぎるため、文字は枠の下へ流れ出す。"
+                        "毎月おなじ土台から作るので、直さないかぎり来月も"
+                        "おなじ形で残る。前月にも在ったからという理由で"
+                        "通してしまうと、一度溢れたものが毎月通り続ける。", size=9)
+            t.name = "あふれる枠"
+            prs.save(path)
+            return path
+
+        with tempfile.TemporaryDirectory() as d:
+            base = deck(os.path.join(d, "prev.pptx"))
+            cur = deck(os.path.join(d, "cur.pptx"))
+            major, _minor, same = run_check3(cur, baseline=base, max_gap=99.0)
+            self.assertIn("文字あふれ", kinds(major))
+            self.assertNotIn("文字あふれ", kinds(same))
 
     def test_切り抜いた画像はゆがみとしない(self):
         """右端を切り落とした画像は、元の縦横比と配置が違って当然である。"""
