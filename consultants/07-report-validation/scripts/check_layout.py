@@ -11,6 +11,8 @@
     重なり      内容どうしの辺が交差していないか
                 （完全に内側に収まっているものは意図した重ね置きとみなす）
     枠外        図形が用紙からはみ出していないか
+    文字あふれ  文字が、入れた枠の高さを越えていないか
+    文字が用紙の外  文字の下端が、スライドの下端を越えていないか
     下の空き    内容の下端と要約枠の間が空きすぎていないか
     画像のゆがみ 画像が元の縦横比のまま置かれているか
     細い画像    縦長すぎて何が写っているか読めなくなっていないか
@@ -53,8 +55,9 @@ import unicodedata as _ud
 import zipfile
 
 from pptx import Presentation
-from pptx.enum.shapes import MSO_SHAPE_TYPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.enum.text import MSO_ANCHOR, PP_ALIGN
+from pptx.oxml.ns import qn
 
 EMU_CM = 360000.0
 
@@ -73,10 +76,240 @@ def cm(v) -> float:
     return (v or 0) / EMU_CM
 
 
+# ---------------------------------------------------------------- 文字の高さ
+# 行の高さは PowerPoint に実測して決めた（scripts/measure_text.ps1）。
+# **行間の指定が無ければ、1行の高さは フォントサイズ × 1.2 である。**
+# メイリオ・游ゴシック・Meiryo UI・MS Pゴシック・Calibri のいずれも同じだった。
+# 「和文フォントは行送りが大きいはず」と考えて 1.35 などを使うと、
+# 枠に収まっている文字を「溢れている」と言う検査になる。
+# 829の文字枠での実測: 1.2 は誤検知0件、1.35 は10件。
+LINE_HEIGHT = 1.2
+
+# 継承をたどっても文字サイズが分からないときに使う値
+DEFAULT_PT = 18.0
+
+PT_CM = 2.54 / 72
+
+
+def _first(chain, tag: str):
+    """継承の並びから、その要素を最初に持っている段落書式を返す。"""
+    for p in chain:
+        e = p.find(qn(tag))
+        if e is not None:
+            return e
+    return None
+
+
+class StyleBook:
+    """文字サイズ・行間・段落前後の空きを、レイアウトとマスターから継ぐ。
+
+    python-pptx は継承を解かない。図形に書いていない文字サイズは分からず、
+    既定値で埋めると見積もりが大きく外れる。レイアウト側で 26.25pt と
+    決まっている見出しのプレースホルダーを 18pt とみなせば、
+    「収まっている」という結論になってしまう。
+    829の文字枠での実測: 継承を解かないと取りこぼしが 2件 → 6件 に増える。
+
+    たどる順は PowerPoint と同じで、先に見つかったものが勝つ。
+
+        段落自身 → 図形の既定 → レイアウトの同じ枠 → マスターの同じ枠
+        → マスターの本文/見出しの既定 → プレゼンテーションの既定
+    """
+
+    # マスターが持つ既定は3つしかない。見出しは titleStyle、日付やページ番号は
+    # otherStyle、**それ以外の枠はすべて bodyStyle** である。
+    # 「本文」と名の付く種類だけを bodyStyle にすると、内容の枠（OBJECT）が
+    # otherStyle に落ちて、32pt の本文を 18pt とみなすことになる。
+    _TITLE = {PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE,
+              PP_PLACEHOLDER.VERTICAL_TITLE}
+    _OTHER = {PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER,
+              PP_PLACEHOLDER.HEADER, PP_PLACEHOLDER.SLIDE_NUMBER}
+
+    @classmethod
+    def _master_style(cls, kind) -> str:
+        if kind in cls._TITLE:
+            return "p:titleStyle"
+        if kind in cls._OTHER:
+            return "p:otherStyle"
+        return "p:bodyStyle"
+
+    def __init__(self, prs=None):
+        self._default = None if prs is None else             prs._element.find(qn("p:defaultTextStyle"))
+        self._cache = {}
+
+    def chain(self, slide, sh, lvl: int) -> list:
+        key = (id(slide), id(sh._element), lvl)
+        if key not in self._cache:
+            self._cache[key] = self._build(slide, sh, lvl)
+        return self._cache[key]
+
+    def _build(self, slide, sh, lvl: int) -> list:
+        tag = qn(f"a:lvl{min(max(lvl, 0), 8) + 1}pPr")
+        out = []
+
+        def add_lst(el):
+            if el is None:
+                return
+            ls = el.find(qn("a:lstStyle"))
+            if ls is None:
+                return
+            p = ls.find(tag)
+            if p is not None:
+                out.append(p)
+
+        add_lst(sh._element.find(qn("p:txBody")))
+
+        ph = None
+        try:
+            if sh.is_placeholder:
+                ph = sh.placeholder_format
+        except (AttributeError, ValueError):
+            ph = None
+        layout = getattr(slide, "slide_layout", None)
+        master = getattr(layout, "slide_master", None)
+        if ph is not None:
+            for holder in (layout, master):
+                m = self._same_placeholder(holder, ph)
+                if m is not None:
+                    add_lst(m._element.find(qn("p:txBody")))
+            if master is not None:
+                styles = master._element.find(qn("p:txStyles"))
+                if styles is not None:
+                    st = styles.find(qn(self._master_style(ph.type)))
+                    if st is not None:
+                        p = st.find(tag)
+                        if p is not None:
+                            out.append(p)
+        if self._default is not None:
+            p = self._default.find(tag)
+            if p is not None:
+                out.append(p)
+        return out
+
+    @staticmethod
+    def _same_placeholder(holder, ph):
+        """レイアウト/マスターの、同じ枠を探す。番号が合わなければ種類で探す。"""
+        if holder is None:
+            return None
+        try:
+            cands = list(holder.placeholders)
+        except (AttributeError, KeyError):
+            return None
+        for c in cands:
+            if c.placeholder_format.idx == ph.idx:
+                return c
+        for c in cands:
+            if c.placeholder_format.type == ph.type:
+                return c
+        return None
+
+    @staticmethod
+    def size_pt(chain, par) -> float:
+        """段落の文字サイズ(pt)。行の高さは、その段落で一番大きい文字で決まる。"""
+        got = [r.font.size.pt for r in par.runs if r.font.size]
+        if got:
+            return max(got)
+        if not par.runs:
+            end = par._p.find(qn("a:endParaRPr"))
+            if end is not None and end.get("sz"):
+                return float(end.get("sz")) / 100.0
+        for p in chain:
+            d = p.find(qn("a:defRPr"))
+            if d is not None and d.get("sz"):
+                return float(d.get("sz")) / 100.0
+        return DEFAULT_PT
+
+    @staticmethod
+    def line_spacing(chain) -> tuple[float, float]:
+        """(フォントサイズに対する倍率, pt での固定値)。"""
+        e = _first(chain, "a:lnSpc")
+        if e is not None:
+            pct = e.find(qn("a:spcPct"))
+            if pct is not None:
+                return float(pct.get("val", 100000)) / 100000.0, 0.0
+            pts = e.find(qn("a:spcPts"))
+            if pts is not None:
+                return 0.0, float(pts.get("val", 0)) / 100.0
+        return 1.0, 0.0
+
+    @staticmethod
+    def spacing(chain, tag: str) -> tuple[float, float]:
+        """段落前後の空き。(pt での指定, 行の高さに対する割合)。
+
+        % 指定は、フォントサイズではなく**行の高さ**に掛かる（実測で確認）。
+        """
+        e = _first(chain, tag)
+        if e is not None:
+            pts = e.find(qn("a:spcPts"))
+            if pts is not None:
+                return float(pts.get("val", 0)) / 100.0, 0.0
+            pct = e.find(qn("a:spcPct"))
+            if pct is not None:
+                return 0.0, float(pct.get("val", 0)) / 100000.0
+        return 0.0, 0.0
+
+    @staticmethod
+    def indent_cm(chain) -> float:
+        """箇条書きのぶら下げなど、左に食われる幅(cm)。"""
+        for p in chain:
+            v = p.get("marL")
+            if v is not None:
+                return max(0.0, float(v) / EMU_CM)
+        return 0.0
+
+
+def measure_text(sh, slide, styles: "StyleBook") -> tuple[float, float]:
+    """文字そのものが占める高さ(cm)と、最も広い行の幅(cm)を返す。
+
+    枠の余白は含めない。**枠の内寸と比べるため**である。
+
+    **枠の高さで丸めない。** 丸めると「文字が枠より高い」を原理的に検出できない。
+    もとの実装は重なり判定のために min(枠高, 文字高) としており、
+    そのため文字のはみ出しだけが検査をすり抜けていた。
+    """
+    tf = sh.text_frame
+    body = tf._txBody.find(qn("a:bodyPr"))
+    scale, reduction = 1.0, 0.0
+    if body is not None:
+        fit = body.find(qn("a:normAutofit"))
+        if fit is not None:
+            # 「文字を枠に合わせる」。PowerPointが決めた縮小率を反映する
+            scale = float(fit.get("fontScale", 100000)) / 100000.0
+            reduction = float(fit.get("lnSpcReduction", 0)) / 100000.0
+
+    ml, mr = cm(tf.margin_left), cm(tf.margin_right)
+    wrap = tf.word_wrap is not False
+    box_w = cm(sh.width)
+
+    height, widest = 0.0, 0.0
+    for i, par in enumerate(tf.paragraphs):
+        chain = styles.chain(slide, sh, par.level)
+        own = par._p.find(qn("a:pPr"))
+        if own is not None:
+            chain = [own] + chain
+        size = styles.size_pt(chain, par) * scale
+        mult, fixed = styles.line_spacing(chain)
+        usable = max(box_w - ml - mr - styles.indent_cm(chain), 0.1)
+        text = "".join(r.text for r in par.runs)
+        w = text_width_cm(text, size)
+        n = max(1, int(-(-w // usable))) if wrap else 1
+        widest = max(widest, min(w, usable) if wrap else w)
+        line = fixed * PT_CM if fixed else \
+            size * LINE_HEIGHT * mult * max(0.0, 1.0 - reduction) * PT_CM
+        height += n * line
+        # 文字枠の1行目の前の空きは、PowerPointが無視する（実測で確認）
+        if i:
+            pt, pct = styles.spacing(chain, "a:spcBef")
+            height += pt * PT_CM + pct * line
+        pt, pct = styles.spacing(chain, "a:spcAft")
+        height += pt * PT_CM + pct * line
+    return height, widest
+
+
 class Shape:
     """検査に必要な情報だけを取り出した図形"""
 
-    def __init__(self, sh, slide_no: int, z: int = 0):
+    def __init__(self, sh, slide_no: int, z: int = 0, slide=None,
+                 styles: "StyleBook | None" = None):
         self.raw = sh
         self.slide = slide_no
         self.z = z          # 描画順。大きいほど上に載る
@@ -98,8 +331,12 @@ class Shape:
         # テキストボックスは透明で、文字のあるところしか占めない。
         # 塗りや枠線を持つ図形は枠のぶんだけ場所を占める。
         self.tx, self.ty, self.tw, self.th = self.x, self.y, self.w, self.h
+        # 文字が縦に占める高さ。**枠で丸めない。** 0 は「文字が無い」。
+        self.text_h = 0.0
+        self.text_top = self.y
+        self.inner_h = self.h
         if self.text:
-            self._shrink_to_text(sh)
+            self._shrink_to_text(sh, slide, styles)
             # 文字の占める範囲は控えておく（画像に隠れた判定で使う）
             self.ex, self.ey, self.ew, self.eh = self.tx, self.ty, self.tw, self.th
             if not self.is_textbox:
@@ -108,37 +345,48 @@ class Shape:
         else:
             self.ex, self.ey, self.ew, self.eh = self.x, self.y, self.w, self.h
 
-    def _shrink_to_text(self, sh) -> None:
-        """枠を、実際に文字が占める範囲まで縮める。"""
-        usable = max(self.w - 0.2, 0.1)
-        lines = 0
-        widest = 0.0
-        height = 0.0
-        for par in sh.text_frame.paragraphs:
-            t = "".join(r.text for r in par.runs)
-            if not t.strip():
-                lines += 1
-                height += 0.35
-                continue
-            size = next((r.font.size.pt for r in par.runs if r.font.size), 11.0)
-            w = text_width_cm(t, size)
-            n = max(1, int(-(-w // usable)))
-            widest = max(widest, min(w, usable))
-            height += n * (size * 1.35 / 72 * 2.54)
-            lines += n
-        if not lines:
-            return
+    def _shrink_to_text(self, sh, slide, styles) -> None:
+        """文字が実際に占める範囲を測り、重なり判定用の枠を縮める。
+
+        重なりを見るときは枠の中だけを見ればよいので min(枠高, 文字高) にする。
+        だが**その丸めた値しか持たないと、文字が枠より高い状態を検出できない。**
+        はみ出しの判定に使うため、丸める前の高さを text_h に残す。
+        """
+        if styles is None:                     # 単体で Shape を作ったとき
+            styles = StyleBook()
+        height, widest = measure_text(sh, slide, styles)
+        tf = sh.text_frame
+        mt, mb = cm(tf.margin_top), cm(tf.margin_bottom)
+        self.text_h = height
+        self.inner_h = max(self.h - mt - mb, 0.0)
+        # 文字の上端は、縦位置の揃え方で決まる
+        anchor = None
+        try:
+            anchor = tf.vertical_anchor
+        except Exception:
+            pass
+        if anchor == MSO_ANCHOR.BOTTOM:
+            self.text_top = self.y + self.h - mb - height
+        elif anchor == MSO_ANCHOR.MIDDLE:
+            self.text_top = self.y + (self.h - height) / 2
+        else:
+            self.text_top = self.y + mt
         align = None
         try:
-            align = sh.text_frame.paragraphs[0].alignment
+            align = tf.paragraphs[0].alignment
         except Exception:
             pass
         self.tw = min(self.w, widest + 0.25)
-        self.th = min(self.h, height + 0.15)
+        self.th = min(self.h, height + mt + mb)
         if align == PP_ALIGN.CENTER:
             self.tx = self.x + (self.w - self.tw) / 2
         elif align == PP_ALIGN.RIGHT:
             self.tx = self.x + (self.w - self.tw)
+
+    @property
+    def text_bottom(self) -> float:
+        """文字の下端。文字が無ければ枠の下端。"""
+        return self.text_top + self.text_h if self.text_h else self.bottom
 
     @property
     def right(self) -> float:
@@ -166,7 +414,7 @@ class Shape:
         return bool(self.text)
 
 
-def collect(slide, slide_no: int) -> list[Shape]:
+def collect(slide, slide_no: int, styles: "StyleBook | None" = None) -> list[Shape]:
     """グループは中身に展開して集める（枠だけの重なりを数えないため）"""
     out = []
 
@@ -180,7 +428,7 @@ def collect(slide, slide_no: int) -> list[Shape]:
                     continue
             except (AttributeError, TypeError):
                 continue
-            out.append(Shape(sh, slide_no, len(out)))
+            out.append(Shape(sh, slide_no, len(out), slide, styles))
 
     walk(slide.shapes)
     return out
@@ -287,7 +535,7 @@ class Baseline:
 
 
 def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
-          summary_prefix: str, margin: float,
+          summary_prefix: str, margin: float, text_slack: float = 0.10,
           strict: bool = False, baseline: "Baseline | None" = None
           ) -> tuple[list, list, list, list]:
     """指摘を返す。
@@ -297,13 +545,19 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
     """
     prs = Presentation(path)
     SW, SH = cm(prs.slide_width), cm(prs.slide_height)
+    styles = StyleBook(prs)
     major, minor, same, marks = [], [], [], []
 
-    def note(n, kind, label, detail, ident, harm):
-        """要対応の候補を1件記録する。前月に在ったものは「前月と同じ」へ回す。"""
+    def note(n, kind, label, detail, ident, harm, always=False):
+        """要対応の候補を1件記録する。前月に在ったものは「前月と同じ」へ回す。
+
+        always=True のものは前月を見ない。**文字のはみ出しには「そう作った」が
+        無い。** フロー図の矢印ラベルの重なりは図の作りだが、枠から溢れた文字が
+        意図であることはない。前月ゆずりで通すと、一度溢れたものが毎月通り続ける。
+        """
         mark = (kind, ident)
         marks.append((mark, harm))
-        if baseline is not None:
+        if baseline is not None and not always:
             ok, why = baseline.allows(mark, harm)
             if ok:
                 same.append((n, kind, label, f"{detail}／{why}"))
@@ -317,7 +571,7 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
         note(n, kind, label, detail, label, 1.0)
 
     for n, slide in enumerate(prs.slides, 1):
-        shapes = collect(slide, n)
+        shapes = collect(slide, n, styles)
         content = [s for s in shapes if s.has_content]
 
         # ---------------------------------------------------- 重なり
@@ -365,6 +619,26 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
                 over = max(-s.x, -s.y, s.right - SW, s.bottom - SH)
                 note(n, "枠外", s.label, f"{over:.2f} cm はみ出し",
                      s.raw.name or "", over)
+
+        # ---------------------------------------------------- 文字のはみ出し
+        # 枠の座標は正しくても、**文字は枠に収まらない。**
+        # python-pptx は文字を描画しないため、spAutoFit（図形を文字に合わせる）
+        # の指定を書いても枠は伸びず、PowerPointも開いただけでは計算し直さない。
+        # 生成時の枠のまま、文字だけが溢れる。座標を見ているだけでは気づけない。
+        for s in shapes:
+            if not s.text_h:
+                continue
+            over = s.text_h - s.inner_h
+            if over > text_slack:
+                note(n, "文字あふれ", s.label,
+                     f"枠の内寸 {s.inner_h:.2f} cm に文字 {s.text_h:.2f} cm"
+                     f"（{over:.2f} cm 超過）",
+                     s.raw.name or "", over, always=True)
+            below = s.text_bottom - SH
+            if below > margin:
+                note(n, "文字が用紙の外", s.label,
+                     f"文字の下端が {below:.2f} cm 下へ出る",
+                     s.raw.name or "", below, always=True)
 
         # ---------------------------------------------------- 画像
         pics = [s for s in shapes if s.is_picture]
@@ -480,6 +754,11 @@ def main() -> int:
                          "（見出し帯の上のラベルなども拾うため誤検知が増える）")
     ap.add_argument("--margin", type=float, default=0.02,
                     help="枠外判定の許容量(cm)。既定 0.02")
+    ap.add_argument("--text-slack", type=float, default=0.10,
+                    help="文字あふれ判定の許容量(cm)。既定 0.10。"
+                         "文字の高さは描画せずに見積もるため、実測との差ぶんを"
+                         "見込む。829の文字枠で実測と突き合わせ、誤検知が0件に"
+                         "なる値を選んだ")
     ap.add_argument("--summary-prefix", default="【このページの要約】",
                     help="要約枠の書き出し。下の空きの判定に使う")
     ap.add_argument("--baseline",
@@ -492,7 +771,7 @@ def main() -> int:
     opts = dict(max_gap=a.max_gap, min_pt=a.min_pt,
                 min_img_w=a.min_img_width,
                 summary_prefix=a.summary_prefix, margin=a.margin,
-                strict=a.strict_overlap)
+                text_slack=a.text_slack, strict=a.strict_overlap)
 
     base = None
     if a.baseline:
