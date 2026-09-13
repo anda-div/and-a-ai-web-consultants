@@ -9,6 +9,13 @@
 | `report_defaults.json` | 章立て、出力先とファイル名、競合比較の方法論、ページ型の座標 |
 | `branding_defaults.json` | 本文の最小サイズ、既定配色、箱の余白ルール、ヒートマップ座標 |
 | `data_source_defaults.json` | 入力フォルダ構成、GASが出力するシート名 |
+| `angles_catalog.json` | 分析の切り口カタログ（問い・必要なデータ・出やすい所見） |
+| `ledger_rules.json` | 費用帯、効く指標の決め方、状態の定義、保留の扱い |
+| `proposals_inbox.json` | 過去資料の取り込み口の仕様（箱と状態の対応、必須項目、前段チェック） |
+| `inbox_readme_template.md` | 取り込み口に置く、クライアントへの1枚説明のひな形 |
+
+`inbox_readme_template.md` は `ledger.py --init-inbox` が案件側へ複製します。
+**そのまま渡せる文面**にしてあるので、直すときは相手が読むことを前提に直してください。
 
 ## なぜ既定値を公開側に置くのか
 

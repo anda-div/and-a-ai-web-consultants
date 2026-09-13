@@ -26,6 +26,11 @@
     python ledger.py --set P-2026-06-001 --status 実装済み --date 2026-07-15
     python ledger.py --order-sheet          低コスト帯をまとめた発注依頼書
     python ledger.py --stats                集計
+
+    python ledger.py --init-inbox           過去資料の取り込み口を作る
+    python ledger.py --import               置かれた原本から取り込みの下書きを作る
+    python ledger.py --import-apply <下書き> 埋まった下書きを台帳へ入れる
+    python ledger.py --check 2026-09        レポートを書く前の警告
 """
 from __future__ import annotations
 
@@ -37,25 +42,45 @@ import re
 import sys
 from datetime import date
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import ledger_import  # noqa: E402  取り込みの本体（台帳を引数で受け取る）
+
 STATUSES = ("提案中", "実装待ち", "実装済み", "検証済み", "却下", "保留")
 DEFAULT_DIR = "_ledger"
 FILENAME = "proposals.json"
 RULES_FILE = "ledger_rules.json"
+INBOX_FILE = "proposals_inbox.json"
+INBOX_README = "inbox_readme_template.md"
+CATALOG_FILE = "angles_catalog.json"
+
+
+def defaults_path(name: str) -> str:
+    """公開側の defaults/ にある既定ファイルを探す。無ければ空文字。"""
+    here = os.path.dirname(os.path.abspath(__file__))
+    for c in (os.path.join(here, "defaults", name),
+              os.path.join(os.path.dirname(here), "defaults", name),
+              os.path.join(here, name)):
+        if os.path.exists(c):
+            return c
+    return ""
+
+
+def load_json(name: str) -> dict:
+    """既定のJSONを読む。公開側の defaults/ に置く。
+
+    ここを直せば全利用者へ届く。`_config/` を個別に直してもらう必要がない。
+    """
+    p = defaults_path(name)
+    if not p:
+        return {}
+    with io.open(p, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_rules() -> dict:
-    """共通ルール（費用帯・指標の決め方・保留の扱い）を読む。
-
-    公開側の defaults/ に置く。ここを直せば全利用者へ届く。
-    """
-    here = os.path.dirname(os.path.abspath(__file__))
-    for c in (os.path.join(here, "defaults", RULES_FILE),
-              os.path.join(os.path.dirname(here), "defaults", RULES_FILE),
-              os.path.join(here, RULES_FILE)):
-        if os.path.exists(c):
-            with io.open(c, encoding="utf-8") as f:
-                return json.load(f)
-    return {}
+    """共通ルール（費用帯・指標の決め方・保留の扱い）を読む。"""
+    return load_json(RULES_FILE)
 
 
 RULES = load_rules()
@@ -88,6 +113,11 @@ def find_dir(root: str = ".") -> str:
         if os.path.isdir(c):
             return c
     return os.path.join(root, DEFAULT_DIR)
+
+
+def project_root(ledger_dir: str) -> str:
+    """台帳フォルダの親。取り込み口（_proposals_inbox）はここに置く。"""
+    return os.path.dirname(os.path.abspath(ledger_dir)) or "."
 
 
 class Ledger:
@@ -352,9 +382,14 @@ def status_sheet(lg: "Ledger", period: str) -> str:
     L = [f"# 提案の実施状況　確認シート（{period}）", "",
          "こちらで把握している状況です。**違っているところだけ訂正してください。**",
          "すべてに回答いただく必要はありません。", ""]
+    # 費用帯が決まっていないものを落とさない。
+    # 過去資料から取り込んだ提案には工数の見立てが無いのが普通で、
+    # 3つの帯だけで回すと**取り込んだ提案が1件も載らない確認シート**になる。
+    # 訂正をもらうための紙なので、そこが抜けると取り込み自体が無駄になる。
     groups = [("低", "低コスト帯（まとめて1回の発注にできます）"),
               ("中", "見積が必要なもの"),
-              ("高", "次期リニューアルで検討するもの")]
+              ("高", "次期リニューアルで検討するもの"),
+              ("", "過去にお出ししていた提案（いまの状況を教えてください）")]
     for band, head in groups:
         rows = [i for i in lg.pending()
                 if (i.get("cost_band") or cost_band(i.get("effort", ""))) == band]
@@ -425,9 +460,132 @@ def main() -> int:
     ap.add_argument("--blocked-by", default="", help="保留にするとき：何待ちか")
     ap.add_argument("--revisit-on", default="", help="保留にするとき：再検討の目安 YYYY-MM")
     ap.add_argument("--stats", action="store_true", help="集計を表示")
+    ap.add_argument("--init-inbox", action="store_true",
+                    help="過去資料の取り込み口（_proposals_inbox）を作り、"
+                         "クライアントへ渡すREADMEを置く")
+    ap.add_argument("--import", dest="do_import", action="store_true",
+                    help="取り込み口に置かれた原本を読み、AIが埋める下書きを作る。"
+                         "取り込み済みの原本は飛ばす")
+    ap.add_argument("--import-apply", metavar="下書き.json",
+                    help="埋まった下書きを台帳へ入れる。"
+                         "target × angle で重複を判定し、原本を _archive/ へ退避する")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="--import-apply で、台帳に書かずに結果だけ見る")
+    ap.add_argument("--check", metavar="YYYY-MM",
+                    help="レポートを書く前の警告（未取り込みの原本／台帳の放置）")
     a = ap.parse_args()
 
     lg = Ledger(a.path)
+    ldir = os.path.dirname(os.path.abspath(lg.path))
+    root = project_root(ldir)
+    spec = load_json(INBOX_FILE)
+
+    if a.init_inbox:
+        tpl = defaults_path(INBOX_README)
+        readme = io.open(tpl, encoding="utf-8").read() if tpl else ""
+        made = ledger_import.init_inbox(root, spec, readme)
+        base = os.path.join(root, spec.get("dir_name", "_proposals_inbox"))
+        if made:
+            print(f"取り込み口を作りました: {base}")
+            for p in made:
+                print(f"  {os.path.relpath(p, root)}")
+        else:
+            print(f"取り込み口は既にあります: {base}")
+        print()
+        print("**5つの箱が空のまま、が最もあり得る失敗です。**")
+        print("クライアントに書き出してもらう前提にせず、"
+              "まず自社の過去レポートから初期投入してください。")
+        print("クライアントにお願いするのは、こちらが持っていない資料だけにします。")
+        return 0
+
+    if a.do_import:
+        done = {r.get("sha1") for r in (lg.data.get("imports") or [])}
+        found, skipped = ledger_import.scan(root, spec, done)
+        base = os.path.join(root, spec.get("dir_name", "_proposals_inbox"))
+        if not os.path.isdir(base):
+            print(f"取り込み口がありません: {base}")
+            print("`ledger.py --init-inbox` で作れます。")
+            return 1
+        if skipped:
+            print(f"取り込み済みのため飛ばしました: {len(skipped)} 件")
+        if not found:
+            print("未取り込みの原本はありません。")
+            return 0
+        cat = load_json(CATALOG_FILE)
+        draft = ledger_import.build_draft(root, spec, cat, found, ldir)
+        out = os.path.join(ldir, f"import_{draft['created']}.json")
+        os.makedirs(ldir, exist_ok=True)
+        with io.open(out, "w", encoding="utf-8", newline="\n") as f:
+            f.write(json.dumps(draft, ensure_ascii=False, indent=2) + "\n")
+        print(f"未取り込みの原本 {len(found)} 件から下書きを作りました。")
+        print(f"  {out}")
+        print()
+        for s in draft["sources"]:
+            mark = "×" if s["読めなかった理由"] else " "
+            print(f"  {mark} [{s['folder']}] {s['file']}　{s['文字数']:,} 字"
+                  + (f"　{s['読めなかった理由']}" if s["読めなかった理由"] else ""))
+        print()
+        print("次にすること: 各 sources の「全文」を読み、proposals を埋めてから")
+        print(f"  python ledger.py --import-apply \"{out}\"")
+        print()
+        print("**target（対象URL）と angle（切り口）は必ず埋めてください。**")
+        print("この2つが重複判定の軸です。空だと、同じ提案を来月もう一度出します。")
+        return 0
+
+    if a.import_apply:
+        if not os.path.exists(a.import_apply):
+            print(f"下書きがありません: {a.import_apply}")
+            return 1
+        with io.open(a.import_apply, encoding="utf-8") as f:
+            draft = json.load(f)
+        period = (a.check or draft.get("created", ""))[:7] or date.today().isoformat()[:7]
+        res = ledger_import.apply_draft(lg, draft, spec, period=period,
+                                        archive_root=root, dry_run=a.dry_run)
+        if res["incomplete"]:
+            print(f"【埋まっていない】{len(res['incomplete'])} 件　"
+                  "推測で埋めず、00_未分類 に落として人に聞いてください。")
+            for row, miss in res["incomplete"]:
+                print(f"  ・{row.get('title') or '（題名なし）'}"
+                      f"　不足: {'、'.join(miss)}")
+            print()
+        if res["duplicates"]:
+            print(f"【すでに台帳にある】{len(res['duplicates'])} 件　"
+                  "対象URL × 切り口が同じものです。")
+            for row, hit in res["duplicates"]:
+                print(f"  ・{row.get('title')}")
+                print(f"      既存 {hit['id']}　{hit['title']}（{hit['status']}）")
+            print()
+        print(f"【台帳へ入れた】{len(res['added'])} 件"
+              + ("　※ --dry-run のため書き込んでいません" if a.dry_run else ""))
+        for i in res["added"]:
+            print(line(i))
+        if res["moved"]:
+            print(f"\n原本 {len(res['moved'])} 件を _archive/ へ退避しました。"
+                  "以後は台帳だけを読みます。")
+        if res["kept"]:
+            print(f"\n入口に残した原本：{len(res['kept'])} 件")
+            print("台帳に入っていないものを退避すると、情報が黙って消えます。"
+                  "埋めてからもう一度実行してください。")
+            print("読んだうえで提案が無かった原本は、下書きの「提案なし」に"
+                  "ファイル名を書いてください。")
+            for f in res["kept"]:
+                print(f"  ・{f}")
+        if res["added"] and not a.dry_run:
+            print("\n次にすること: 確認シートを打ち合わせに持っていってください。")
+            print(f"  python ledger.py --status-sheet {period}")
+            print("こちらの理解を記入した一覧を出し、**違うところだけ訂正してもらいます。**")
+        return 1 if res["incomplete"] else 0
+
+    if a.check:
+        warns = ledger_import.warnings(lg, root, spec, a.check)
+        if not warns:
+            print(f"{a.check}　レポートを書く前の確認：問題ありません。")
+            return 0
+        print(f"{a.check}　レポートを書く前に片付けること：{len(warns)} 件\n")
+        for w in warns:
+            print(f"  ・{w}")
+        print()
+        return 1
 
     if a.set:
         if not a.status:
