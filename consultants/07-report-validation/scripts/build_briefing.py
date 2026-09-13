@@ -36,7 +36,8 @@ from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ledger import Ledger, find_dir  # noqa: E402
+import ledger_import  # noqa: E402
+from ledger import INBOX_FILE, Ledger, find_dir, load_json  # noqa: E402
 from report_config import load as load_config  # noqa: E402
 
 HISTORY = "angles_history.json"
@@ -144,6 +145,21 @@ def build(period: str) -> str:
     A("白紙から考え始めないための材料です。**提案そのものはまだ書いていません。**")
     A("下の「4. 提案候補」を Claude Code に埋めてもらい、そこから人が選びます。")
     A("")
+
+    # ---------------------------------------------------------- 0
+    # 「毎月必ず読む」を運用ルールにすると守られない。**機械が前段で言う。**
+    # ここを飛ばして提案を書くと、実施済みの案を出し直すことになる。
+    warns = ledger_import.warnings(lg, cfg.root, load_json(INBOX_FILE), period)
+    if warns:
+        A("## 0. 先に片付けること")
+        A("")
+        A("**ここを飛ばして提案を書かないでください。**"
+          "過去の経緯を確認しないまま出すと、実施済みの案を出し直すことになります。")
+        A("品質ではなく信頼の問題で、一度その印象がつくとレポート全体の読まれ方が変わります。")
+        A("")
+        for w in warns:
+            A(f"- {w}")
+        A("")
 
     # ---------------------------------------------------------- 1
     A("## 1. 台帳の状況")
