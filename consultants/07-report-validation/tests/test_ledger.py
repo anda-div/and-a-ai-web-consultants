@@ -52,7 +52,8 @@ class 本文の訂正(Base):
     def test_直した記録が残る(self):
         """いつ・何を・なぜ。次の提案の材料になる。"""
         p = self.add(metric="旧指標")
-        self.lg.amend(p["id"], "metric", "新指標", reason="改名したため")
+        self.lg.amend(p["id"], "metric", "新指標", reason="改名したため",
+                      kind="表現の修正")
         r = p["amendments"][-1]
         self.assertEqual((r["field"], r["before"], r["after"]),
                          ("metric", "旧指標", "新指標"))
@@ -63,13 +64,28 @@ class 本文の訂正(Base):
         """なぜ直したかが残らないと、同じ誤りを次でもう一度書く。"""
         p = self.add()
         with self.assertRaises(ValueError):
-            self.lg.amend(p["id"], "title", "新しい題", reason="  ")
+            self.lg.amend(p["id"], "title", "新しい題", reason="  ",
+                          kind="表現の修正")
+
+    def test_型が無ければ受け付けない(self):
+        """型はブリーフィングの絞り込みに使う。無い記録は絞り込みから漏れる。"""
+        p = self.add()
+        with self.assertRaises(ValueError):
+            self.lg.amend(p["id"], "title", "新しい題", reason="理由", kind="")
+
+    def test_同じ値での再実行は受け付けない(self):
+        """空振りの記録が増えるだけで、古い記録は残る。"""
+        p = self.add(title="題")
+        with self.assertRaises(ValueError) as e:
+            self.lg.amend(p["id"], "title", "題", reason="理由",
+                          kind="表現の修正")
+        self.assertIn("--amend-fix", str(e.exception))
 
     def test_状態は本文の口から変えられない(self):
         p = self.add()
         for f in ("status", "implemented_on", "blocked_by"):
             with self.assertRaises(ValueError):
-                self.lg.amend(p["id"], f, "x", reason="理由")
+                self.lg.amend(p["id"], f, "x", reason="理由", kind="表現の修正")
 
     def test_知らない訂正の型は受け付けない(self):
         p = self.add()
@@ -81,7 +97,8 @@ class 本文の訂正(Base):
         p = self.add(effort="設定のみ")
         self.assertEqual(p["cost_band"], "低")
         item, _ = self.lg.amend(p["id"], "effort", "中規模改修",
-                                reason="想定より大きかった")
+                                reason="想定より大きかった",
+                                kind="実装してみて方法が誤りと判明")
         self.assertEqual(item["cost_band"], "高")
         self.assertEqual(self.lg.low_cost(), [])
 
@@ -97,8 +114,93 @@ class 本文の訂正(Base):
     def test_ぶつからなければ黙る(self):
         p = self.add(target="/form", angle="price")
         _item, warn = self.lg.amend(p["id"], "target", "/contact",
-                                    reason="対象を取り違えていた")
+                                    reason="対象を取り違えていた",
+                                    kind="対象や切り口の取り違え")
         self.assertEqual(warn, "")
+
+
+class 型の取り違えを直す(Base):
+    """**事実は凍結し、解釈だけを直す。**
+
+    どの項目を何から何へ変えたかは事実で、書き換えてはいけない。
+    それがどの型に当たるかは解釈で、後から分かることがある。
+
+    型を取り違えると、ひとつの事象が複数件に見え、
+    「同じ誤りを繰り返さない」という信号が薄まる。
+    """
+
+    def amended(self, kind="実装してみて方法が誤りと判明"):
+        p = self.add(metric="旧イベント名")
+        self.lg.amend(p["id"], "metric", "新イベント名",
+                      reason="イベント名の改名に追随", kind=kind)
+        return p
+
+    def test_型を直せる(self):
+        p = self.amended()
+        rec = self.lg.amend_fix(p["id"], 1, kind="表現の修正",
+                                why="改名への追随であって、方法の誤りではない")
+        self.assertEqual(rec["kind"], "表現の修正")
+
+    def test_何を変えたかは書き換えられない(self):
+        p = self.amended()
+        before = dict(p["amendments"][0])
+        self.lg.amend_fix(p["id"], 1, kind="表現の修正", why="改名への追随")
+        after = p["amendments"][0]
+        for k in ("field", "before", "after", "on"):
+            self.assertEqual(before[k], after[k])
+
+    def test_直した事実が記録に残る(self):
+        p = self.amended()
+        self.lg.amend_fix(p["id"], 1, kind="表現の修正",
+                          why="依頼書が3項目をひとつの事象としてまとめていた")
+        fix = p["amendments"][0]["fixed"][-1]
+        self.assertEqual(fix["was_kind"], "実装してみて方法が誤りと判明")
+        self.assertIn("依頼書", fix["why"])
+
+    def test_直す理由が無ければ受け付けない(self):
+        """取り違えた原因が残らないと、同じ取り違えがまた起きる。"""
+        p = self.amended()
+        with self.assertRaises(ValueError):
+            self.lg.amend_fix(p["id"], 1, kind="表現の修正", why=" ")
+
+    def test_無い番号は受け付けない(self):
+        p = self.amended()
+        for n in (0, 2):
+            with self.assertRaises(ValueError):
+                self.lg.amend_fix(p["id"], n, kind="表現の修正", why="理由")
+
+    def test_知らない型には直せない(self):
+        p = self.amended()
+        with self.assertRaises(ValueError):
+            self.lg.amend_fix(p["id"], 1, kind="でたらめ", why="理由")
+
+    def test_直したらブリーフィングから消える(self):
+        """ひとつの事象が3件に見える、という実害そのもの。"""
+        p = self.amended()
+        shown = [r for _i, r, _n in self.lg.amendments()
+                 if L.kind_in_briefing(r.get("kind", ""))]
+        self.assertEqual(len(shown), 1)
+        self.lg.amend_fix(p["id"], 1, kind="表現の修正", why="改名への追随")
+        shown = [r for _i, r, _n in self.lg.amendments()
+                 if L.kind_in_briefing(r.get("kind", ""))]
+        self.assertEqual(shown, [])
+
+
+class 型のカタログ(unittest.TestCase):
+    """絞り込みの判断はカタログが持つ。スクリプトに型名を書かない。"""
+
+    def test_型名をスクリプトに書いていない(self):
+        src = open(os.path.join(ROOT, "scripts", "build_briefing.py"),
+                   encoding="utf-8").read()
+        self.assertNotIn("表現の修正", src)
+
+    def test_カタログの全ての型が判定できる(self):
+        kinds = L.amend_kinds()
+        self.assertTrue(kinds)
+        for k in kinds:
+            self.assertIsInstance(L.kind_in_briefing(k), bool)
+        self.assertFalse(L.kind_in_briefing("表現の修正"))
+        self.assertTrue(L.kind_in_briefing("実装してみて方法が誤りと判明"))
 
 
 class 作業完了と公開(Base):

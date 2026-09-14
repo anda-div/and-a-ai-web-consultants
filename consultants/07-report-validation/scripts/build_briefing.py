@@ -37,7 +37,8 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import ledger_import  # noqa: E402
-from ledger import INBOX_FILE, Ledger, find_dir, load_json  # noqa: E402
+from ledger import (INBOX_FILE, Ledger, find_dir,  # noqa: E402
+                    kind_in_briefing, load_json)
 from report_config import load as load_config  # noqa: E402
 
 HISTORY = "angles_history.json"
@@ -213,8 +214,10 @@ def build(period: str) -> str:
             A(f"    - 待っていたもの：{i.get('blocked_by','（未記入）')}")
         A("")
 
-    amended = [(i, r) for i, r in lg.amendments()
-               if r.get("kind") != "表現の修正"]
+    # どの型を出すかは defaults/ledger_rules.json が決める。
+    # ここに型名を書くと、型を足したときに絞り込みが黙ってずれる。
+    amended = [(i, r) for i, r, _n in lg.amendments()
+               if kind_in_briefing(r.get("kind", ""))]
     if amended:
         A(f"### 実装してみて、提案が誤りだった記録（{len(amended)} 件）")
         A("")
