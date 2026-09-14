@@ -237,9 +237,44 @@ class 確認シート(Base):
     """取り込んだ提案は工数が空。3つの費用帯だけで組むと1件も載らない。"""
 
     def test_工数の無い提案も確認シートに載る(self):
-        self.apply([row(title="過去に出していた提案", effort="")])
+        self.apply([row(title="昔あがっていた案", effort="")])
+        self.assertIn("昔あがっていた案", L.status_sheet(self.lg, "2026-09"))
+
+    def test_見出しで出所を主張しない(self):
+        """他社が作った提案書も取り込む。「お出ししていた」と書くと、
+        他社の提案を自社のものとして出しているように読める。"""
+        self.apply([row(effort="")])
         sheet = L.status_sheet(self.lg, "2026-09")
-        self.assertIn("過去に出していた提案", sheet)
+        self.assertIn("これまでに挙がっていた提案", sheet)
+        self.assertNotIn("お出ししていた", sheet)
+
+    def test_工数を埋めても確認前は同じ区分に残る(self):
+        """埋めてしまっても、確かめる前に「まとめて発注できます」と並べない。"""
+        self.apply([row(title="工数を推測で埋めた案", effort="文言のみ")])
+        sheet = L.status_sheet(self.lg, "2026-09")
+        head = sheet.index("これまでに挙がっていた提案")
+        self.assertIn("工数を推測で埋めた案", sheet[head:])
+
+
+class 発注依頼書(Base):
+    """**実施済みかもしれない提案を制作会社へ発注しない。**"""
+
+    def test_取り込んだままの提案は低コスト帯に出さない(self):
+        self.apply([row(effort="文言のみ", vendor="制作",
+                        vendor_brief="文言を直す")])
+        self.assertEqual(self.lg.low_cost(), [])
+
+    def test_状態を確かめたら低コスト帯に入る(self):
+        res = self.apply([row(effort="文言のみ", vendor="制作")])
+        pid = res["added"][0]["id"]
+        self.lg.set_status(pid, "実装待ち")
+        self.assertEqual([i["id"] for i in self.lg.low_cost()], [pid])
+
+    def test_取り込みでない提案は今までどおり(self):
+        """取り込み経由でないものの扱いは変えない。"""
+        self.lg.add(period="2026-09", title="今月の提案", target="/a",
+                    angle="x", effort="文言のみ")
+        self.assertEqual(len(self.lg.low_cost()), 1)
 
 
 class 読み取り(Base):

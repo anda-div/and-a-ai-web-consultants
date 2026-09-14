@@ -100,6 +100,18 @@ def cost_band(effort: str) -> str:
             return band
     return ""
 
+def unconfirmed_import(item: dict) -> bool:
+    """過去資料から取り込んだまま、実施状況をまだ確かめていない提案か。
+
+    取り込んだ時点で分かっているのは「昔こういう提案があった」だけで、
+    **いま実施済みかどうかは分かっていない。** 確認シートで訂正をもらって
+    初めて確定する（そのとき --set が status_confirmed_on を入れる）。
+
+    確かめる前にこれを発注依頼書へ載せると、**すでに実施されているかもしれない
+    提案を制作会社へ発注することになる。** 工数を推測で埋めた場合に起きる。
+    """
+    return bool(item.get("imported_on")) and not item.get("status_confirmed_on")
+
 # 表記ゆれを吸収して照合するための前処理
 _NORM = str.maketrans("ＣＴＡＥＶＦＬＰ０１２３４５６７８９", "CTAEVFLP0123456789")
 _STOP = ("する", "こと", "ため", "など", "および", "を", "に", "の", "が", "は",
@@ -191,7 +203,8 @@ class Ledger:
         配分変更、計測の実装は、渡す相手が別である。vendor で絞る。
         """
         out = [i for i in self.pending()
-               if (i.get("cost_band") or cost_band(i.get("effort", ""))) == "低"]
+               if not unconfirmed_import(i)
+               and (i.get("cost_band") or cost_band(i.get("effort", ""))) == "低"]
         if vendor:
             out = [i for i in out if i.get("vendor") == vendor]
         return out
@@ -277,6 +290,9 @@ class Ledger:
         if status not in STATUSES:
             raise ValueError(f"状態は {' / '.join(STATUSES)} のいずれかです")
         item["status"] = status
+        # 人が状態を確かめた印。取り込んだだけの提案と、確認シートで訂正を
+        # もらった提案を区別する。取り込んだままのものは発注依頼書へ載せない。
+        item["status_confirmed_on"] = date.today().isoformat()
         if note:
             item["status_note"] = note
         if status == "実装済み":
@@ -386,13 +402,25 @@ def status_sheet(lg: "Ledger", period: str) -> str:
     # 過去資料から取り込んだ提案には工数の見立てが無いのが普通で、
     # 3つの帯だけで回すと**取り込んだ提案が1件も載らない確認シート**になる。
     # 訂正をもらうための紙なので、そこが抜けると取り込み自体が無駄になる。
+    #
+    # 見出しで**出所を主張しない。** 取り込む対象には他社が作った提案書や
+    # 社内メモも含まれる。「お出ししていた」と書くと、他社の提案を自社のものとして
+    # 出しているように読める。信頼の話なので、ここは言い方を選ぶ。
     groups = [("低", "低コスト帯（まとめて1回の発注にできます）"),
               ("中", "見積が必要なもの"),
               ("高", "次期リニューアルで検討するもの"),
-              ("", "過去にお出ししていた提案（いまの状況を教えてください）")]
+              ("", "これまでに挙がっていた提案（いまの状況を教えてください）")]
+    listed = set()
     for band, head in groups:
-        rows = [i for i in lg.pending()
-                if (i.get("cost_band") or cost_band(i.get("effort", ""))) == band]
+        if band:
+            rows = [i for i in lg.pending()
+                    if not unconfirmed_import(i)
+                    and (i.get("cost_band") or cost_band(i.get("effort", ""))) == band]
+        else:
+            # 取り込んだまま状態を確かめていないものは、工数が埋まっていても
+            # ここに出す。**確かめる前に「まとめて発注できます」と並べない。**
+            rows = [i for i in lg.pending() if i["id"] not in listed]
+        listed |= {i["id"] for i in rows}
         if not rows:
             continue
         L += [f"## {head}", "",
