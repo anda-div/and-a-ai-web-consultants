@@ -31,6 +31,8 @@
         --value "..." --reason "実装したら成立しなかった" \
         --reason-kind 実装してみて方法が誤りと判明
     python ledger.py --amendments           直した記録（同じ誤りを次に書かないため）
+    python ledger.py --amend-fix P-2026-06-001 --at 2 --reason-kind 表現の修正 \
+        --why "..."                         記録した型の取り違えを直す（事実は凍結）
     python ledger.py --set <ID> --status 実装待ち --work-done 2026-09-14
         こちらの作業は完了。公開待ちのものを発注依頼書から外す
 
@@ -63,6 +65,23 @@ STATUSES = ("提案中", "実装待ち", "実装済み", "検証済み", "却下
 # 直す口が無いと、誤った指示がそのまま発注依頼書で社外へ出る。
 AMENDABLE = ("title", "target", "angle", "metric", "metric_kind",
              "baseline", "expected", "effort", "vendor", "vendor_brief")
+
+
+def amend_kinds() -> dict:
+    """訂正の型。defaults/ledger_rules.json に置く。"""
+    return (RULES.get("amend_reasons") or {}).get("kinds") or {}
+
+
+def kind_in_briefing(kind: str) -> bool:
+    """その型を月初ブリーフィングに出すか。
+
+    **スクリプトに型名を書かない。** 「表現の修正は出さない」と書いてしまうと、
+    型を足したときに絞り込みが黙ってずれる。判断はカタログ側に持たせる。
+    """
+    spec = amend_kinds().get(kind)
+    if isinstance(spec, dict):
+        return bool(spec.get("briefing", True))
+    return bool(kind)
 DEFAULT_DIR = "_ledger"
 FILENAME = "proposals.json"
 RULES_FILE = "ledger_rules.json"
@@ -330,7 +349,7 @@ class Ledger:
         return item
 
     def amend(self, pid: str, field: str, value: str, *, reason: str,
-              kind: str = "") -> tuple[dict, str]:
+              kind: str) -> tuple[dict, str]:
         """提案の本文を直し、直した事実を残す。
 
         **提案は、書いた時点では間違っていることがある。**
@@ -355,11 +374,21 @@ class Ledger:
             raise ValueError(
                 "--reason を書いてください。**なぜ直したかが残らないと、"
                 "同じ誤りを次の提案でもう一度書きます。**")
-        kinds = (RULES.get("amend_reasons") or {}).get("kinds") or {}
-        if kind and kinds and kind not in kinds:
-            raise ValueError(f"訂正の型は {' / '.join(kinds)} のいずれかです")
+        kinds = amend_kinds()
+        if kinds and kind not in kinds:
+            raise ValueError(
+                "--reason-kind を指定してください。型は "
+                f"{' / '.join(kinds)} のいずれかです。\n"
+                "型はブリーフィングの絞り込みに使います。**型の無い記録は"
+                "絞り込みから漏れ、取り違えた記録はひとつの事象を複数件に見せます。**")
 
         before = item.get(field, "")
+        if before == value:
+            # 同じ値で追記すると、空振りの記録が増えるだけで古い記録は残る。
+            # 型を直したいのなら、直す先は本文ではなく記録のほうである。
+            raise ValueError(
+                f"{field} はすでにその値です。何も変わりません。\n"
+                "記録した型や理由だけを直したいときは --amend-fix を使ってください。")
         item[field] = value
         item.setdefault("amendments", []).append(
             {"on": date.today().isoformat(), "field": field,
@@ -382,12 +411,60 @@ class Ledger:
                         "どちらかに寄せるか、片方を却下にしてください。")
         return item, warn
 
-    def amendments(self) -> list[tuple[dict, dict]]:
-        """直した記録を新しい順に。(提案, 訂正) の組で返す。"""
+    def amend_fix(self, pid: str, at: int, *, kind: str = "",
+                  reason: str = "", why: str = "") -> dict:
+        """記録した**型と理由だけ**を直す。
+
+        なぜ書き換えを許すのか。
+
+            どの項目を何から何へ変えたかは **事実** で、書き換えてはいけない。
+            それがどの型に当たるかは **解釈** で、後から分かることがある。
+            事実は凍結し、解釈は直せるようにする。
+
+        型の取り違えは起きる。今回は依頼の説明が3項目をひとつの事象として
+        まとめていたため、受け取った側が3件とも同じ型で記録した。
+        型はブリーフィングの絞り込みに使うので、取り違えると
+        **ひとつの事象が複数件に見え、「同じ誤りを繰り返さない」信号が薄まる。**
+
+        直した事実は記録の中に残す（消さない）。
+        """
+        item = self.get(pid)
+        if item is None:
+            raise KeyError(f"台帳に {pid} がありません")
+        log = item.get("amendments") or []
+        if not log:
+            raise ValueError(f"{pid} に直した記録がありません")
+        if not 1 <= at <= len(log):
+            raise ValueError(f"番号は 1〜{len(log)} です（--amendments で確認できます）")
+        if not kind and not reason:
+            raise ValueError("--reason-kind か --reason のどちらかを指定してください")
+        kinds = amend_kinds()
+        if kind and kinds and kind not in kinds:
+            raise ValueError(f"訂正の型は {' / '.join(kinds)} のいずれかです")
+        if not why.strip():
+            raise ValueError(
+                "--why を書いてください（なぜ型を直すのか）。"
+                "**取り違えた原因が残らないと、同じ取り違えがまた起きます。**")
+
+        rec = log[at - 1]
+        fix = {"on": date.today().isoformat(), "why": why}
+        if kind and kind != rec.get("kind"):
+            fix["was_kind"] = rec.get("kind", "")
+            rec["kind"] = kind
+        if reason and reason != rec.get("reason"):
+            fix["was_reason"] = rec.get("reason", "")
+            rec["reason"] = reason
+        if len(fix) == 2:
+            raise ValueError("指定された内容は、すでにその値です。")
+        rec.setdefault("fixed", []).append(fix)
+        return rec
+
+    def amendments(self) -> list[tuple[dict, dict, int]]:
+        """直した記録を新しい順に。(提案, 訂正, その提案の中での番号)。"""
         out = []
         for i in self.items:
-            for a in i.get("amendments") or []:
-                out.append((i, a))
+            for n, a in enumerate(i.get("amendments") or [], 1):
+                out.append((i, a, n))
         return sorted(out, key=lambda t: t[1].get("on", ""), reverse=True)
 
     def set_verification(self, pid: str, *, period: str, metric: str,
@@ -615,7 +692,14 @@ def main() -> int:
     ap.add_argument("--reason", default="",
                     help="なぜ直したか（必須）。次の提案で同じ誤りを書かないために残す")
     ap.add_argument("--reason-kind", default="",
-                    help="訂正の型（defaults/ledger_rules.json の amend_reasons）")
+                    help="訂正の型（必須）。defaults/ledger_rules.json の amend_reasons")
+    ap.add_argument("--amend-fix", metavar="ID",
+                    help="記録した型と理由だけを直す。"
+                         "どの項目を何から何へ変えたかは書き換えられない")
+    ap.add_argument("--at", type=int,
+                    help="--amend-fix で直す記録の番号（--amendments で確認）")
+    ap.add_argument("--why", default="",
+                    help="--amend-fix で、なぜ型を直すのか（必須）")
     ap.add_argument("--amendments", action="store_true",
                     help="直した記録を新しい順に表示する")
     ap.add_argument("--work-done", default="",
@@ -736,10 +820,24 @@ def main() -> int:
         print()
         return 1
 
+    def show_kinds():
+        """型を選ばせる。**未指定のまま通さない。** 取り違えの多くはここで防げる。"""
+        print("訂正の型を --reason-kind で指定してください。")
+        print("型はブリーフィングの絞り込みに使います。"
+              "取り違えると、ひとつの事象が複数件に見えます。\n")
+        for k, spec in amend_kinds().items():
+            note = spec.get("note", "") if isinstance(spec, dict) else str(spec)
+            mark = "月初に出る" if kind_in_briefing(k) else "月初に出ない"
+            print(f"  {k}　（{mark}）")
+            print(f"      {note}")
+
     if a.amend:
         if not a.field or a.value is None:
             print("--field と --value を指定してください。")
             print("直せる項目: " + " / ".join(AMENDABLE))
+            return 1
+        if not a.reason_kind:
+            show_kinds()
             return 1
         try:
             item, warn = lg.amend(a.amend, a.field, a.value,
@@ -760,6 +858,35 @@ def main() -> int:
                   "すでに発注済みであれば、訂正を先方へお伝えしてください。")
         return 0
 
+    if a.amend_fix:
+        if not a.reason_kind and not a.reason:
+            show_kinds()
+            return 1
+        if a.at is None:
+            print("--at で記録の番号を指定してください（--amendments で確認できます）。")
+            return 1
+        try:
+            rec = lg.amend_fix(a.amend_fix, a.at, kind=a.reason_kind,
+                               reason=a.reason, why=a.why)
+        except (KeyError, ValueError) as e:
+            print(str(e))
+            return 1
+        lg.save()
+        fix = rec["fixed"][-1]
+        print(f"記録の型を直しました　{a.amend_fix}　{a.at} 件目（{rec['field']}）")
+        if "was_kind" in fix:
+            print(f"  型　　前: {fix['was_kind'] or '（空）'}　→　後: {rec['kind']}")
+        if "was_reason" in fix:
+            print(f"  理由　前: {fix['was_reason']}")
+            print(f"  　　　後: {rec['reason']}")
+        print(f"  直した理由: {fix['why']}")
+        print()
+        print("どの項目を何から何へ変えたかは変えていません。"
+              "**事実は凍結し、解釈だけを直しています。**")
+        if not kind_in_briefing(rec.get("kind", "")):
+            print("この型は月初ブリーフィングに出なくなります。")
+        return 0
+
     if a.amendments:
         rows = lg.amendments()
         if not rows:
@@ -767,14 +894,23 @@ def main() -> int:
             return 0
         print(f"直した記録：{len(rows)} 件")
         print("**提案は、書いた時点では間違っていることがあります。**"
-              "同じ誤りを次に書かないための記録です。\n")
-        for i, r in rows:
+              "同じ誤りを次に書かないための記録です。")
+        print("型を取り違えたときは --amend-fix <ID> --at <番号> で直せます。\n")
+        for i, r, n in rows:
             ang = f"／切り口 {i['angle']}" if i.get("angle") else ""
-            print(f"  {r['on']}  {i['id']}  {r['field']}{ang}")
+            out = "" if kind_in_briefing(r.get("kind", "")) else "　※月初には出ない"
+            print(f"  {r['on']}  {i['id']}  {n} 件目　{r['field']}{ang}{out}")
             print(f"      前: {r['before'] or '（空）'}")
             print(f"      後: {r['after'] or '（空）'}")
             print(f"      理由: {r['reason']}"
-                  + (f"（{r['kind']}）" if r.get("kind") else ""))
+                  + (f"（{r['kind']}）" if r.get("kind") else "　※型なし"))
+            for f in r.get("fixed") or []:
+                was = []
+                if "was_kind" in f:
+                    was.append(f"型 {f['was_kind'] or '（空）'}")
+                if "was_reason" in f:
+                    was.append("理由")
+                print(f"      ← {f['on']} に{'・'.join(was)}を訂正：{f['why']}")
         return 0
 
     if a.set:
