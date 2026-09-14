@@ -436,8 +436,6 @@ class Ledger:
             raise ValueError(f"{pid} に直した記録がありません")
         if not 1 <= at <= len(log):
             raise ValueError(f"番号は 1〜{len(log)} です（--amendments で確認できます）")
-        if not kind and not reason:
-            raise ValueError("--reason-kind か --reason のどちらかを指定してください")
         kinds = amend_kinds()
         if kind and kinds and kind not in kinds:
             raise ValueError(f"訂正の型は {' / '.join(kinds)} のいずれかです")
@@ -454,8 +452,10 @@ class Ledger:
         if reason and reason != rec.get("reason"):
             fix["was_reason"] = rec.get("reason", "")
             rec["reason"] = reason
-        if len(fix) == 2:
-            raise ValueError("指定された内容は、すでにその値です。")
+        # 型も理由も変わらないときは、**経緯だけを追記する。**
+        # 値が動かないことと、残すものが無いことは別である。
+        # 値は正しいが原因が残っていない記録（この仕組みができる前に手で直したものなど）を、
+        # 書き換えずに説明できるようにする。
         rec.setdefault("fixed", []).append(fix)
         return rec
 
@@ -859,7 +859,8 @@ def main() -> int:
         return 0
 
     if a.amend_fix:
-        if not a.reason_kind and not a.reason:
+        if not (a.reason_kind or a.reason or a.why):
+            print("型を直すなら --reason-kind、経緯だけを残すなら --why を指定してください。\n")
             show_kinds()
             return 1
         if a.at is None:
@@ -873,17 +874,21 @@ def main() -> int:
             return 1
         lg.save()
         fix = rec["fixed"][-1]
-        print(f"記録の型を直しました　{a.amend_fix}　{a.at} 件目（{rec['field']}）")
+        moved = "was_kind" in fix or "was_reason" in fix
+        head = "記録の型を直しました" if moved else "記録に経緯を追記しました"
+        print(f"{head}　{a.amend_fix}　{a.at} 件目（{rec['field']}）")
         if "was_kind" in fix:
             print(f"  型　　前: {fix['was_kind'] or '（空）'}　→　後: {rec['kind']}")
         if "was_reason" in fix:
             print(f"  理由　前: {fix['was_reason']}")
             print(f"  　　　後: {rec['reason']}")
-        print(f"  直した理由: {fix['why']}")
+        if not moved:
+            print(f"  型　　{rec.get('kind') or '（無し）'}（変えていません）")
+        print(f"  {'直した' if moved else '書き残す'}理由: {fix['why']}")
         print()
         print("どの項目を何から何へ変えたかは変えていません。"
               "**事実は凍結し、解釈だけを直しています。**")
-        if not kind_in_briefing(rec.get("kind", "")):
+        if moved and not kind_in_briefing(rec.get("kind", "")):
             print("この型は月初ブリーフィングに出なくなります。")
         return 0
 
@@ -910,7 +915,8 @@ def main() -> int:
                     was.append(f"型 {f['was_kind'] or '（空）'}")
                 if "was_reason" in f:
                     was.append("理由")
-                print(f"      ← {f['on']} に{'・'.join(was)}を訂正：{f['why']}")
+                what = f"{'・'.join(was)}を訂正" if was else "経緯を追記"
+                print(f"      ← {f['on']} に{what}：{f['why']}")
         return 0
 
     if a.set:

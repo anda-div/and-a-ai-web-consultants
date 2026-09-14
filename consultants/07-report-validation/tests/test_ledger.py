@@ -157,6 +157,28 @@ class 型の取り違えを直す(Base):
         self.assertEqual(fix["was_kind"], "実装してみて方法が誤りと判明")
         self.assertIn("依頼書", fix["why"])
 
+    def test_経緯だけを追記できる(self):
+        """**値が動かないことと、残すものが無いことは別である。**
+
+        この仕組みができる前に手で直した記録は、値はもう正しいが
+        取り違えた原因が残っていない。書き換えずに説明できるようにする。
+        """
+        p = self.amended(kind="表現の修正")
+        rec = self.lg.amend_fix(p["id"], 1,
+                                why="この仕組みができる前に手で直していた")
+        self.assertEqual(rec["kind"], "表現の修正")
+        fix = rec["fixed"][-1]
+        self.assertNotIn("was_kind", fix)
+        self.assertNotIn("was_reason", fix)
+        self.assertIn("手で直していた", fix["why"])
+
+    def test_同じ型を指定しても経緯は残る(self):
+        p = self.amended(kind="表現の修正")
+        rec = self.lg.amend_fix(p["id"], 1, kind="表現の修正",
+                                why="確かめたうえで、この型のままとした")
+        self.assertEqual(len(rec["fixed"]), 1)
+        self.assertNotIn("was_kind", rec["fixed"][0])
+
     def test_直す理由が無ければ受け付けない(self):
         """取り違えた原因が残らないと、同じ取り違えがまた起きる。"""
         p = self.amended()
