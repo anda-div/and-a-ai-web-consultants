@@ -56,6 +56,14 @@ except ImportError:  # pragma: no cover
     print("Playwright が必要です: pip install -r ../requirements.txt", file=sys.stderr)
     raise
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# 画像の結合・余白落とし・貼り付く要素の判定は Ptengine 側と同じ問題が出る。
+# 二重管理にしないため heatmap_image.py に集めてある。
+from heatmap_image import (  # noqa: E402
+    AUTO_STICKY_MAX, detect_sticky, overlap_for, parse_trim, stitch,
+    trim_bounds, trim_margins,
+)
 
 BASE = "https://clarity.microsoft.com"
 HEATMAP_TYPES = {"tap": "0", "scroll": "1"}
@@ -72,10 +80,6 @@ DEVICE_VIEWS = {"Mobile": "0", "Tablet": "1", "Desktop": "2"}
 # ヒートマップ表示領域。idは安定しているが、変更された場合は
 # 「スクロール可能でclientHeightが大きい要素」を探す方にフォールバックする。
 VISUAL_ID = "heatmapVisual"
-
-# 貼り付く要素を自動判定するときの上限（CSS px）。
-# これより大きく切ることはしない。本文を削る事故を防ぐため。
-AUTO_STICKY_MAX = 200
 
 FIND_VISUAL = """
 (id) => {
@@ -282,17 +286,7 @@ def capture(args: argparse.Namespace) -> Path:
             print(f"[+] 結合画像: {joined}（1枚撮り {im.size[0]}x{im.size[1]}）")
             print(f"[+] メタ情報: {out_dir / 'capture_meta.json'}")
             return joined
-        # 貼り付く要素を消す場合、その高さぶんは隣のタイルで埋めるので、
-        # 重なりをその合計より広く取っておく必要がある。
-        # 自動判定は撮り終えないと分からないため、先に広めに取っておく。
-        auto = args.sticky_top == "auto" or args.sticky_bottom == "auto"
-        overlap = args.overlap
-        if auto:
-            overlap = max(overlap, AUTO_STICKY_MAX * 2 + 8)
-        else:
-            need = int(args.sticky_top) + int(args.sticky_bottom)
-            if need > 0:
-                overlap = max(overlap, need + 8)
+        overlap = overlap_for(args.overlap, args.sticky_top, args.sticky_bottom)
         step = max(50, view - overlap)
         print(f"[*] 領域 {sel} / ページ高さ {total}px / 表示高さ {view}px / 送り {step}px")
 
@@ -331,7 +325,8 @@ def capture(args: argparse.Namespace) -> Path:
     sticky_top = resolve(args.sticky_top, "top")
     sticky_bottom = resolve(args.sticky_bottom, "bottom")
 
-    joined, used, detected = stitch(tiles, total, view, out_dir, args.type,
+    joined, used, detected = stitch(tiles, total, view,
+                                    out_dir / f"heatmap_{args.type}_joined.png",
                                     sticky_css=sticky_top,
                                     sticky_bottom_css=sticky_bottom,
                                     trim=parse_trim(args.trim))
@@ -358,181 +353,6 @@ def capture(args: argparse.Namespace) -> Path:
     print(f"[+] 結合画像: {joined}")
     print(f"[+] メタ情報: {out_dir / 'capture_meta.json'}")
     return joined
-
-
-def detect_sticky(tiles, view_css: int, side: str) -> int:
-    """画面に貼り付く要素の高さを、タイル画像から測る（CSS px）。
-
-    上端と下端で、効く手がかりが違う。実測して使い分けている。
-
-    **上端（ヘッダー）はばらつきで見る。**
-    スクロールしても動かない部分は、どのタイルでも似た絵になるため、
-    タイル間のばらつきが本文より小さい。半透明のヘッダーは後ろが透けて
-    タイルごとに見た目が変わるので「1枚目と同じか」では判定できないが、
-    それでも本文よりはばらつきが小さい（実測：ヘッダー38 / 本文83）。
-
-    **下端（固定バーやチャットボタン）は1枚目との一致で見る。**
-    下端はばらつきが本文と近く、ばらつきでは分けられない
-    （実測：下端15 / 本文19）。一方、絵そのものは1枚目とよく一致する。
-    """
-    import numpy as np
-
-    use = [p for p, _ in (tiles[:-1] if side == "bottom" else tiles)][:8]
-    if len(use) < 3:
-        return 0
-
-    stack = np.stack([np.asarray(Image.open(p).convert("L"), dtype=np.float32)
-                      for p in use])
-    tile_h = stack.shape[1]
-    scale = tile_h / view_css
-    limit_rows = int(tile_h * 0.3)
-
-    if side == "top":
-        sd = stack.std(axis=0).mean(axis=1)
-        # 1行だけの跳ねで打ち切らないよう、9行の移動平均でならす
-        k = np.ones(9) / 9
-        sd = np.convolve(sd, k, mode="same")
-        body = float(np.median(sd[int(tile_h * 0.4):int(tile_h * 0.9)]))
-        if body < 1.0:
-            return 0
-        limit = body * 0.6
-        n = 0
-        for v in sd[:limit_rows]:
-            if v >= limit:
-                break
-            n += 1
-        return int(round(n / scale))
-
-    base, others = stack[0], stack[1:]
-    n = 0
-    for h in range(10, limit_rows + 1, 10):
-        diffs = [float(np.abs(a[-h:] - base[-h:]).mean()) for a in others]
-        if sum(1 for d in diffs if d < 12.0) / len(diffs) < 0.6:
-            break
-        n = h
-    return int(round(n / scale))
-
-
-NO_TRIM = "none"       # 「余白を落とさない」の指定
-
-
-def parse_trim(value):
-    """--trim の値を解く。auto なら None（自分で判定させる）。"""
-    if not value or value == "auto":
-        return None
-    if value == NO_TRIM:
-        return NO_TRIM
-    try:
-        left, right = (int(v) for v in str(value).split(","))
-    except ValueError:
-        raise SystemExit(f"--trim の指定が読めません: {value}（「L,R」か auto か none）")
-    if right <= left:
-        raise SystemExit(f"--trim の左右が逆です: {value}")
-    return left, right
-
-
-def trim_bounds(im: Image.Image, pad: int = 4):
-    """ページ本体が写っている左右の位置を返す。切るべきでなければ None。
-
-    Clarityは表示領域の中央にページを縮小表示するため、両側に白い帯が残る。
-    そのまま資料に貼ると、ページが小さく余白ばかりの図になる。
-
-    「白でない画素が1つでもある列」を探すやり方では切れない。
-    枠線やスクロールバーが端に写り込んでいて、端の列も白ではないため。
-    **列ごとに中身の割合を見て、その割合が高い列が連続する一番長い区間**を取る。
-    """
-    import numpy as np
-
-    a = np.asarray(im.convert("RGB"), dtype=np.int16)
-    ratio = (a < 249).any(axis=2).mean(axis=0)   # 列ごとの「白でない」割合
-    solid = ratio >= 0.10                        # スクロールバー（数%）は外れる
-
-    best = (0, -1)
-    start = None
-    for x in range(len(solid) + 1):
-        if x < len(solid) and solid[x]:
-            if start is None:
-                start = x
-        elif start is not None:
-            if x - start > best[1] - best[0]:
-                best = (start, x)
-            start = None
-
-    left, right = best
-    if right - left < im.width * 0.05:      # 切りすぎは疑わしいのでやめる
-        return None
-    return max(0, left - pad), min(im.width, right + pad)
-
-
-def trim_margins(im: Image.Image, pad: int = 4, bounds=None):
-    """左右の白い余白を落とし、ページ本体だけにする。上下は切らない。
-
-    `bounds` を渡すと、その左右で切る。**クリックマップとスクロールマップで
-    幅をそろえるために使う。** 同じページ・同じデバイスでも、自動判定に任せると
-    幅が違う画像になってしまう。クリックマップは点が疎で余白と見なされる列が
-    多く、スクロールマップは熱の帯が全幅に及ぶため、判定が食い違う。
-    貼り付く要素の高さと同じく、**クリックマップで決めた値を引き継ぐ**。
-
-    返り値は (画像, 実際に使った左右)。使わなかったときの左右は None。
-    """
-    if bounds == NO_TRIM:
-        return im, None
-    if bounds is None:
-        bounds = trim_bounds(im, pad)
-    if bounds is None:
-        return im, None
-    left, right = bounds
-    left = max(0, min(left, im.width - 1))
-    right = max(left + 1, min(right, im.width))
-    return im.crop((left, 0, right, im.height)), (left, right)
-
-
-def stitch(tiles, total_css: int, view_css: int, out_dir: Path, kind: str,
-           sticky_css: int = 0, sticky_bottom_css: int = 0, trim=None):
-    """scrollTopの実測値をもとに決定的に結合する（画像差分による重なり探索は不要）。
-
-    各タイルは scrollTop から view_css 分の内容を写している。
-    スケール（画像px / CSS px）はタイル画像の高さから求める。
-
-    高さは「ページ全体の高さ」ではなく、**実際にスクロールできた範囲**で決める。
-    Clarityは表示領域の幅に合わせてページを縮小するため、
-    スクロールできる量はページ全高より小さい。ページ全高を使うと、
-    下半分が真っ白な画像になる。
-    """
-    first = Image.open(tiles[0][0])
-    scale = first.height / view_css
-    width = first.width
-    reached_css = max(t for _, t in tiles) + view_css
-    height_css = min(total_css, reached_css)
-    canvas = Image.new("RGB", (width, int(round(height_css * scale))), (255, 255, 255))
-
-    # 画面に貼り付く要素（上のヘッダー、下のバーやチャットボタン）は、
-    # すべてのタイルに写り込む。そのまま並べると継ぎ目ごとに繰り返し現れる。
-    # 2枚目以降は上を、最後以外は下を切り落とす。
-    # そこに入るはずの中身は、隣のタイルの重なり部分が持っている。
-    cut_top = int(round(sticky_css * scale)) if sticky_css > 0 else 0
-    cut_bottom = int(round(sticky_bottom_css * scale)) if sticky_bottom_css > 0 else 0
-    last = len(tiles) - 1
-
-    for i, (path, scroll_top) in enumerate(tiles):
-        img = Image.open(path).convert("RGB")
-        y = int(round(scroll_top * scale))
-        top = cut_top if i > 0 else 0
-        bottom = img.height - cut_bottom if i < last else img.height
-        if bottom - top < 10:
-            continue
-        if top or bottom != img.height:
-            img = img.crop((0, top, img.width, bottom))
-            y += top
-        canvas.paste(img, (0, y))
-
-    # 自分で判定した左右は、切るかどうかに関わらず必ず控えておく。
-    # 呼び出し側が、クリックとスクロールの判定を持ち寄って決めるため。
-    detected = trim_bounds(canvas)
-    canvas, used = trim_margins(canvas, bounds=trim)
-    joined = out_dir / f"heatmap_{kind}_joined.png"
-    canvas.save(joined)
-    return joined, used, detected
 
 
 def login(args: argparse.Namespace) -> None:
