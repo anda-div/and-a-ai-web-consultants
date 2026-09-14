@@ -2,12 +2,12 @@
 
 ![行動・ヒートマップ分析コンサルタント](assets/character.png)
 
-Microsoft Clarityのクリック・スクロール画像とページキャプチャから、利用者の行動上の摩擦を探すAIです。ヒートマップだけで心理を断定せず、画面構造とGA4の変化を組み合わせます。
+Microsoft Clarity または Ptengine のヒートマップとページキャプチャから、利用者の行動上の摩擦を探すAIです。ヒートマップだけで心理を断定せず、画面構造とGA4の変化を組み合わせます。
 
 ## このJOBが行うこと
 
 - Clarity連番キャプチャの結合
-- Clarityヒートマップの位置ずれのないキャプチャ
+- ヒートマップの位置ずれのないキャプチャ（**Clarity / Ptengine の両方**）
 - Clarityヒートマップの実数化（要素別クリック配分・スクロール到達率）
 - PC/SPページの再現可能なキャプチャ
 - クリック集中、無反応クリック、到達不足、導線競合の記録
@@ -51,7 +51,8 @@ Microsoft Clarityのクリック・スクロール画像とページキャプチ
 |---|---|
 | [JOB.md](JOB.md) | 実行手順（画像台帳 → 観測 → 反証 → 引き渡し） |
 | [CLARITY_METRICS.md](CLARITY_METRICS.md) | ヒートマップを画像ではなく実数で取る。URLで状態を指定し、要素別クリック数とスクロール到達率を数値化する |
-| [CLARITY_CAPTURE.md](CLARITY_CAPTURE.md) | ヒートマップを位置ずれなくキャプチャする。熱とページ画像を同期させて分割撮影・結合する。1ページ4枚が約2分で揃う |
+| [CLARITY_CAPTURE.md](CLARITY_CAPTURE.md) | **Clarity**のヒートマップを位置ずれなくキャプチャする。熱とページ画像を同期させて分割撮影・結合する。1ページ4枚が約2分で揃う |
+| [PTENGINE_CAPTURE.md](PTENGINE_CAPTURE.md) | **Ptengine**のヒートマップを位置ずれなくキャプチャする。状態がURLに載らないため、UIを操作して作った状態を読み戻して確かめてから撮る |
 
 ## セットアップ
 
@@ -84,6 +85,40 @@ python scripts/clarity_heatmap_capture.py \
     --type tap --device Mobile \
     --out output/shoes_tap
 ```
+
+### Ptengineの場合
+
+やることは同じで、**状態の作り方だけが違います。** Ptengineは期間・デバイス・種別が
+URLに載らないため、UIを操作して作った状態を**画面から読み戻して確かめてから**撮ります。
+
+```bash
+python scripts/ptengine_heatmap_capture.py --login          # 初回のみ
+
+python scripts/ptengine_capture_set.py \
+    --sid <ワークスペースID> \
+    --page-url https://example.com/lp/a.html \
+    --name lp_a --date 2026-08
+```
+
+種別は クリック / 滞在 / 離脱 / コンバージョン の4つです。
+詳細と、実機で分かった16の落とし穴は [PTENGINE_CAPTURE.md](PTENGINE_CAPTURE.md) にあります。
+
+> **Ptengineは下敷きが実サイトです。** Clarityは保存済みのスクリーンショットに
+> 熱を重ねますが、Ptengineは撮影時点のページを読み込みます。
+> **サイト改修があった月は、過去の熱が現在のページに乗ります。**
+> 撮影時点のページ全高を記録に残すので、前月と見比べてください。
+
+### ツールの使い分け
+
+| | Clarity | Ptengine |
+|---|---|---|
+| 状態の指定 | URLで完全に再現できる | UIを操作し、読み戻して確かめる |
+| 下敷き | 保存済みのスクリーンショット（凍結） | 実サイト（撮影時点） |
+| 種別 | タップ / スクロール | クリック / 滞在 / 離脱 / コンバージョン |
+| 実数 | `clarity_metrics_extract.js` | GraphQL（未実装。画像を先に整えています） |
+
+結合・余白落とし・貼り付く要素の判定は `scripts/heatmap_image.py` で**共用**しています。
+片方で見つけた改善が、もう片方にも届きます。
 
 手元の連番画像やページを扱う:
 
