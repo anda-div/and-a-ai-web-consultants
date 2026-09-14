@@ -213,6 +213,26 @@ def build(period: str) -> str:
             A(f"    - 待っていたもの：{i.get('blocked_by','（未記入）')}")
         A("")
 
+    amended = [(i, r) for i, r in lg.amendments()
+               if r.get("kind") != "表現の修正"]
+    if amended:
+        A(f"### 実装してみて、提案が誤りだった記録（{len(amended)} 件）")
+        A("")
+        A("**提案は、書いた時点では間違っていることがあります。**")
+        A("着手して初めて「その方法では成立しない」と分かることがあり、"
+          "計測まわりでは珍しくありません。")
+        A("同じ切り口で同じ誤りを繰り返さないために載せています。"
+          "**今月の提案が同じ型に当たらないか確かめてください。**")
+        A("")
+        for i, r in amended[:12]:
+            ang = f"／切り口 {i['angle']}" if i.get("angle") else ""
+            A(f"- **{i['id']}**　{r['field']} を訂正（{r['on']}{ang}）")
+            A(f"    - 誤り：{r['before'] or '（空）'}")
+            A(f"    - 訂正：{r['after'] or '（空）'}")
+            A(f"    - 理由：{r['reason']}"
+              + (f"（{r['kind']}）" if r.get("kind") else ""))
+        A("")
+
     rejected = [i for i in lg.items if i["status"] == "却下"]
     if rejected:
         A(f"### 却下された提案（{len(rejected)} 件）")

@@ -27,6 +27,13 @@
     python ledger.py --order-sheet          低コスト帯をまとめた発注依頼書
     python ledger.py --stats                集計
 
+    python ledger.py --amend P-2026-06-001 --field vendor_brief \
+        --value "..." --reason "実装したら成立しなかった" \
+        --reason-kind 実装してみて方法が誤りと判明
+    python ledger.py --amendments           直した記録（同じ誤りを次に書かないため）
+    python ledger.py --set <ID> --status 実装待ち --work-done 2026-09-14
+        こちらの作業は完了。公開待ちのものを発注依頼書から外す
+
     python ledger.py --init-inbox           過去資料の取り込み口を作る
     python ledger.py --import               置かれた原本から取り込みの下書きを作る
     python ledger.py --import-apply <下書き> 埋まった下書きを台帳へ入れる
@@ -47,6 +54,15 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ledger_import  # noqa: E402  取り込みの本体（台帳を引数で受け取る）
 
 STATUSES = ("提案中", "実装待ち", "実装済み", "検証済み", "却下", "保留")
+
+# 本文として直せる項目。状態は --set、本文は --amend と入口を分ける。
+#
+# **提案は、書いた時点では間違っていることがある。** 計測まわりでは特に多い。
+# 提案を書く時点で対象サイトの実装を完全には把握できず、着手して初めて
+# 「その方法では成立しない」と分かる（送信完了ページが無い、など）。
+# 直す口が無いと、誤った指示がそのまま発注依頼書で社外へ出る。
+AMENDABLE = ("title", "target", "angle", "metric", "metric_kind",
+             "baseline", "expected", "effort", "vendor", "vendor_brief")
 DEFAULT_DIR = "_ledger"
 FILENAME = "proposals.json"
 RULES_FILE = "ledger_rules.json"
@@ -179,6 +195,10 @@ class Ledger:
             "blocked_by": kw.get("blocked_by", ""),
             "revisit_on": kw.get("revisit_on", ""),
             "decision_owner": kw.get("decision_owner", ""),
+            # 作業が終わった日と、変更が世に出た日は別である。
+            # 当社の実装が終わっても、先方が公開するまで数値は動かない。
+            # 前後比較の起点は implemented_on（公開日）のほう。
+            "work_done_on": kw.get("work_done_on", ""),
             "implemented_on": kw.get("implemented_on"),
             "verification": kw.get("verification"),
         }
@@ -202,8 +222,12 @@ class Ledger:
         ただし発注先が違えば1回にはまとまらない。文言の修正、広告の
         配分変更、計測の実装は、渡す相手が別である。vendor で絞る。
         """
+        # 作業が終わっているものは載せない。**発注するものが無い。**
+        # 「実装待ち」には2つの意味が混ざる ――「着手を待っている」と
+        # 「作業は終わり、先方の公開を待っている」。後者を依頼書に載せると、
+        # 済んだ作業を制作会社へ発注することになる。
         out = [i for i in self.pending()
-               if not unconfirmed_import(i)
+               if not unconfirmed_import(i) and not i.get("work_done_on")
                and (i.get("cost_band") or cost_band(i.get("effort", ""))) == "低"]
         if vendor:
             out = [i for i in out if i.get("vendor") == vendor]
@@ -283,7 +307,7 @@ class Ledger:
 
     # ------------------------------------------------------------ 更新
     def set_status(self, pid: str, status: str, *, on: str = "",
-                   note: str = "") -> dict:
+                   note: str = "", work_done: str = "") -> dict:
         item = self.get(pid)
         if item is None:
             raise KeyError(f"台帳に {pid} がありません")
@@ -295,6 +319,8 @@ class Ledger:
         item["status_confirmed_on"] = date.today().isoformat()
         if note:
             item["status_note"] = note
+        if work_done:
+            item["work_done_on"] = work_done
         if status == "実装済み":
             item["implemented_on"] = on or date.today().isoformat()
         if status == "保留" and not (item.get("blocked_by") and item.get("revisit_on")):
@@ -302,6 +328,67 @@ class Ledger:
                 "保留にするときは --blocked-by と --revisit-on が必要です。"
                 "何待ちかが書かれていないと、提案は静かに消えます。")
         return item
+
+    def amend(self, pid: str, field: str, value: str, *, reason: str,
+              kind: str = "") -> tuple[dict, str]:
+        """提案の本文を直し、直した事実を残す。
+
+        **提案は、書いた時点では間違っていることがある。**
+        着手して初めて「その方法では成立しない」と分かることがあり、
+        計測まわりでは珍しくない。直す口が無いと、誤った指示が
+        そのまま発注依頼書で社外へ出る。
+
+        理由を必ず書かせる。**何をどう間違えたかが、次の提案の材料になる。**
+        同じ切り口で同じ誤りを繰り返さないために、月初ブリーフィングが持ち出す。
+
+        戻り値は (提案, 警告文)。
+        """
+        item = self.get(pid)
+        if item is None:
+            raise KeyError(f"台帳に {pid} がありません")
+        if field not in AMENDABLE:
+            raise ValueError(
+                f"{field} は本文の項目ではありません。直せるのは "
+                f"{' / '.join(AMENDABLE)} です。"
+                "状態（status・実装日・保留の条件）は --set で変えてください。")
+        if not reason.strip():
+            raise ValueError(
+                "--reason を書いてください。**なぜ直したかが残らないと、"
+                "同じ誤りを次の提案でもう一度書きます。**")
+        kinds = (RULES.get("amend_reasons") or {}).get("kinds") or {}
+        if kind and kinds and kind not in kinds:
+            raise ValueError(f"訂正の型は {' / '.join(kinds)} のいずれかです")
+
+        before = item.get(field, "")
+        item[field] = value
+        item.setdefault("amendments", []).append(
+            {"on": date.today().isoformat(), "field": field,
+             "before": before, "after": value,
+             "reason": reason, "kind": kind})
+
+        warn = ""
+        if field == "effort":
+            # 工数が変われば費用帯も変わる。古い帯を残すと発注の束が狂う
+            item["cost_band"] = cost_band(value)
+        if field in ("target", "angle"):
+            # 重複判定の軸を動かした。別の提案と衝突していないか見る
+            hit = next((o for o in self.items
+                        if o["id"] != pid and o.get("angle") == item.get("angle")
+                        and o.get("target") and item.get("target")
+                        and o["target"] == item["target"]), None)
+            if hit:
+                warn = (f"直した結果、{hit['id']}「{hit['title']}」と"
+                        "対象URL × 切り口が同じになりました。"
+                        "どちらかに寄せるか、片方を却下にしてください。")
+        return item, warn
+
+    def amendments(self) -> list[tuple[dict, dict]]:
+        """直した記録を新しい順に。(提案, 訂正) の組で返す。"""
+        out = []
+        for i in self.items:
+            for a in i.get("amendments") or []:
+                out.append((i, a))
+        return sorted(out, key=lambda t: t[1].get("on", ""), reverse=True)
 
     def set_verification(self, pid: str, *, period: str, metric: str,
                          before, after, note: str = "") -> dict:
@@ -411,10 +498,29 @@ def status_sheet(lg: "Ledger", period: str) -> str:
               ("高", "次期リニューアルで検討するもの"),
               ("", "これまでに挙がっていた提案（いまの状況を教えてください）")]
     listed = set()
+
+    # 作業が終わり、公開を待っているもの。
+    # 「実装待ち」と同じ扱いにすると「実施が決まったと理解しています」と出て、
+    # **当社の作業が止まっているように読める。** 実際に待っているのは公開の判断で、
+    # ここで聞くべきは進捗ではなく**公開日**である。前後比較の起点になる。
+    waiting = [i for i in lg.pending() if i.get("work_done_on")]
+    if waiting:
+        listed |= {i["id"] for i in waiting}
+        L += ["## 作業が完了し、公開をお待ちしているもの", "",
+              "**こちら側の作業は終わっています。**公開の判断だけをお待ちしている状態です。",
+              "",
+              "| ID | 提案 | 作業完了 | 公開日（ご記入ください） |", "|---|---|---|---|"]
+        for i in waiting:
+            L.append(f"| {i['id']} | {i['title']} | {i['work_done_on']} |  |")
+        L += ["",
+              "> **公開日が分かると、その前後で比較できます。**",
+              "> 数値が動く起点は作業完了日ではなく公開日のため、"
+              "公開後に日付をお知らせください。", ""]
+
     for band, head in groups:
         if band:
             rows = [i for i in lg.pending()
-                    if not unconfirmed_import(i)
+                    if i["id"] not in listed and not unconfirmed_import(i)
                     and (i.get("cost_band") or cost_band(i.get("effort", ""))) == band]
         else:
             # 取り込んだまま状態を確かめていないものは、工数が埋まっていても
@@ -501,6 +607,21 @@ def main() -> int:
                     help="--import-apply で、台帳に書かずに結果だけ見る")
     ap.add_argument("--check", metavar="YYYY-MM",
                     help="レポートを書く前の警告（未取り込みの原本／台帳の放置）")
+    ap.add_argument("--amend", metavar="ID",
+                    help="提案の本文を直す（題・対象・切り口・指標・発注指示など）。"
+                         "状態は --set、本文は --amend と入口を分けている")
+    ap.add_argument("--field", help="直す項目: " + " / ".join(AMENDABLE))
+    ap.add_argument("--value", help="直したあとの値")
+    ap.add_argument("--reason", default="",
+                    help="なぜ直したか（必須）。次の提案で同じ誤りを書かないために残す")
+    ap.add_argument("--reason-kind", default="",
+                    help="訂正の型（defaults/ledger_rules.json の amend_reasons）")
+    ap.add_argument("--amendments", action="store_true",
+                    help="直した記録を新しい順に表示する")
+    ap.add_argument("--work-done", default="",
+                    help="こちら側の作業が終わった日 YYYY-MM-DD。"
+                         "公開待ちのものを発注依頼書から外す。"
+                         "前後比較の起点は公開日（--date）のほう")
     a = ap.parse_args()
 
     lg = Ledger(a.path)
@@ -615,6 +736,47 @@ def main() -> int:
         print()
         return 1
 
+    if a.amend:
+        if not a.field or a.value is None:
+            print("--field と --value を指定してください。")
+            print("直せる項目: " + " / ".join(AMENDABLE))
+            return 1
+        try:
+            item, warn = lg.amend(a.amend, a.field, a.value,
+                                  reason=a.reason, kind=a.reason_kind)
+        except (KeyError, ValueError) as e:
+            print(str(e))
+            return 1
+        lg.save()
+        rec = item["amendments"][-1]
+        print(f"直しました　{item['id']}　{a.field}")
+        print(f"  前: {rec['before'] or '（空）'}")
+        print(f"  後: {rec['after'] or '（空）'}")
+        print(f"  理由: {rec['reason']}" + (f"（{rec['kind']}）" if rec['kind'] else ""))
+        if warn:
+            print(f"\n※ {warn}")
+        if a.field == "vendor_brief":
+            print("\n発注依頼書に出る文面です。"
+                  "すでに発注済みであれば、訂正を先方へお伝えしてください。")
+        return 0
+
+    if a.amendments:
+        rows = lg.amendments()
+        if not rows:
+            print("直した記録はありません。")
+            return 0
+        print(f"直した記録：{len(rows)} 件")
+        print("**提案は、書いた時点では間違っていることがあります。**"
+              "同じ誤りを次に書かないための記録です。\n")
+        for i, r in rows:
+            ang = f"／切り口 {i['angle']}" if i.get("angle") else ""
+            print(f"  {r['on']}  {i['id']}  {r['field']}{ang}")
+            print(f"      前: {r['before'] or '（空）'}")
+            print(f"      後: {r['after'] or '（空）'}")
+            print(f"      理由: {r['reason']}"
+                  + (f"（{r['kind']}）" if r.get("kind") else ""))
+        return 0
+
     if a.set:
         if not a.status:
             print("--status を指定してください（" + " / ".join(STATUSES) + "）")
@@ -628,7 +790,8 @@ def main() -> int:
         if a.revisit_on:
             target["revisit_on"] = a.revisit_on
         try:
-            item = lg.set_status(a.set, a.status, on=a.date, note=a.note)
+            item = lg.set_status(a.set, a.status, on=a.date, note=a.note,
+                                 work_done=a.work_done)
         except ValueError as e:
             print(str(e))
             return 1
