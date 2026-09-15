@@ -62,6 +62,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from heatmap_image import (  # noqa: E402
     AUTO_STICKY_MAX, detect_sticky, overlap_for, parse_trim, stitch,
 )
+from ptengine_dates import (  # noqa: E402
+    disabled_reason, month_span, months_to_move,
+)
 
 try:
     from playwright.sync_api import sync_playwright
@@ -427,48 +430,6 @@ DATE_PICKER_OPEN = """
 """
 
 
-def month_span(value: str):
-    """期間の指定を (開始日, 終了日) に直す。
-
-    **月次レポートでプリセット（今月・先月・過去7日間）を使ってはいけない。**
-    実行した日から決まるため、意図した月とずれる。暦月を渡す。
-
-        2026-08                  … その月の1日〜末日
-        2026-08-01..2026-08-31   … 指定した範囲
-    """
-    m = re.fullmatch(r"(\d{4})-(\d{2})", value)
-    if m:
-        y, mo = int(m.group(1)), int(m.group(2))
-        first = date(y, mo, 1)
-        nxt = date(y + (mo == 12), (mo % 12) + 1, 1)
-        return first, nxt - timedelta(days=1)
-    m = re.fullmatch(r"(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})", value)
-    if m:
-        return date.fromisoformat(m.group(1)), date.fromisoformat(m.group(2))
-    return None
-
-
-def preset_for(span) -> str:
-    """その期間が「今月」「先月」ちょうどなら、対応するプリセット名を返す。
-
-    カレンダーの月送りはアイコンで押しどころが不安定なため、
-    **押さずに済むならその方が確実**である。
-    月次レポートで撮るのはたいてい先月なので、ここで大半が片付く。
-    """
-    start, end = span
-    if start.day != 1:
-        return ""
-    today = date.today()
-    for name, (y, m) in (("今月", (today.year, today.month)),
-                         ("先月", (today.year - (today.month == 1),
-                                   today.month - 1 or 12))):
-        first = date(y, m, 1)
-        nxt = date(y + (m == 12), (m % 12) + 1, 1)
-        if start == first and end == nxt - timedelta(days=1):
-            return name
-    return ""
-
-
 PICK_DAY = """
 ([monthLabel, day]) => {
   const t = e => (e.textContent || '').replace(/\\s+/g, ' ').trim();
@@ -495,12 +456,11 @@ PICK_DAY = """
     }
     if (!best || day > best.len) return 'この月に ' + day + ' 日がありません';
     const cell = cells[best.start + day - 1];
-    // **未来の日は押せない。** 当月や翌月を指定するとここに来る。
-    // 黙って効かないので、理由を返して呼び出し側で止める。
-    if (/disabled/.test(cell.className)) {
-      return monthLabel + day + '日は選べません（未来の日付）。'
-           + '対象月が終わってから撮ってください';
-    }
+    // **押せない日がある。** 未来の日と、遡れる範囲より古い日の両方。
+    // 黙って効かないので、`disabled` だけを返して**理由は呼び出し側で決める**。
+    // ここで「未来の日付」と決めつけると、古い月を指定したときに
+    // 嘘の理由が出る（実測：1年以上前の月で「未来の日付」と表示された）。
+    if (/disabled/.test(cell.className)) return 'disabled';
     cell.click();
     return true;
   }
@@ -508,36 +468,127 @@ PICK_DAY = """
 }
 """
 
-# 月送りの矢印。«（年）‹（月）›（月）»（年）の4つが並ぶ。
-# **クラス名では選べない**ので、矢印の文字そのもので探す。
-# 見つからない場合だけ、クラス名の手がかりに落とす。
+# 月送り・年送りの矢印。4つ並ぶ（実測）。
+#
+#   pt-picker-panel__icon-btn pt-icon-d-arrow-left    « 年を戻す
+#   pt-picker-panel__icon-btn pt-icon-arrow-left      ‹ 月を戻す
+#   pt-picker-panel__icon-btn pt-icon-arrow-right     › 月を進める
+#   pt-picker-panel__icon-btn pt-icon-d-arrow-right   » 年を進める
+#
+# **中身はSVGで、文字は入っていない。** 矢印の文字（‹ ›）で探しても見つからない。
+# クラス名にちゃんと向きが入っているので、そちらで選ぶ。
+#
+# **押し方が期間ボタンと逆である。** 実測した結果はこうだった。
+#
+#   期間ボタン       … DOMの click() では開かない。本物のマウス操作が要る
+#   カレンダーの矢印 … 本物のマウス操作では**動かない**。DOMの click() で動く
+#
+# 同じ画面の中で作法が違う。どちらかに揃えようとすると、片方が黙って効かなくなる。
 MOVE_MONTH = """
-(back) => {
-  const t = e => (e.textContent || '').replace(/\\s+/g, ' ').trim();
-  document.querySelectorAll('[MARK_ATTR]').forEach(e => e.removeAttribute('MARK_ATTR'));
-  const want = back ? '\\u2039' : '\\u203a';      // ‹ / ›
-  let b = [...document.querySelectorAll('button, span, i, a, div')]
-    .filter(e => e.offsetHeight > 6 && e.offsetWidth > 6 && t(e) === want)
-    .sort((x, y) => x.offsetWidth - y.offsetWidth)[0];
+([back, year]) => {
+  const dir = back ? 'left' : 'right';
+  const cls = 'pt-icon-' + (year ? 'd-' : '') + 'arrow-' + dir;
+  let b = [...document.querySelectorAll('button')]
+    .find(e => (e.className || '').toString().includes(cls) && e.offsetHeight > 3);
   if (!b) {
-    const cls = back ? /(prev|left)/i : /(next|right)/i;
-    b = [...document.querySelectorAll('button, span, i, a')]
-      .filter(e => e.offsetHeight > 6 && e.offsetWidth > 6 &&
-                   cls.test((e.className || '').toString()))[0];
+    // クラス名が変わったときの保険。向きの語だけを手がかりにする
+    const re = back ? /(prev|left)/i : /(next|right)/i;
+    const dbl = year ? /(^|[^a-z])d-/i : null;
+    b = [...document.querySelectorAll('button')]
+      .filter(e => e.offsetHeight > 3 && re.test((e.className || '').toString()))
+      .filter(e => !dbl || dbl.test((e.className || '').toString()))[0];
   }
-  if (!b) return false;
-  b.setAttribute('MARK_ATTR', '1');
+  if (!b) return 'ボタンが見つかりません';
+  if (b.disabled) return 'ボタンが押せません（無効）';
+  b.click();
   return true;
 }
-""".replace("MARK_ATTR", MARK)
+"""
 
+# パネルの見出し。**画面全体から拾うと、関係のない文字列まで混ざる。**
+# 見出しの入れ物を先に探し、無いときだけ全体から拾う。
 READ_MONTHS = """
 () => {
   const t = e => (e.textContent || '').replace(/\\s+/g, '').trim();
+  const heads = [...document.querySelectorAll('.pt-date-range-picker__header')]
+    .filter(e => e.offsetHeight > 4).map(t)
+    .filter(s => /^20\\d\\d年\\d{1,2}月$/.test(s));
+  if (heads.length) return heads;
   return [...new Set([...document.querySelectorAll('*')].map(t)
     .filter(s => /^20\\d\\d年\\d{1,2}月$/.test(s)))];
 }
 """
+
+def months_shown(frame) -> list:
+    """カレンダーに出ている月を (年, 月) で返す。左のパネルが先頭。"""
+    out = []
+    for s in frame.evaluate(READ_MONTHS):
+        m = re.fullmatch(r"(20\d\d)年(\d{1,2})月", s)
+        if m:
+            out.append((int(m.group(1)), int(m.group(2))))
+    return out
+
+
+def show_month(frame, page, want: date) -> None:
+    """カレンダーに指定の月を出す。
+
+    パネルは2か月ぶん並ぶ（例：9月と10月）。どちらかに出ていればよい。
+
+    **1か月ずつ送ると、古い月では何十回も押すことになる。**
+    12か月以上離れていれば年送り（`d-arrow`）でまとめて詰める。
+    """
+    for _ in range(48):
+        shown = months_shown(frame)
+        if not shown:
+            raise RuntimeError(
+                "カレンダーの月の見出しが読めません。画面の作りが変わった可能性があります。")
+        move = months_to_move(shown, want)
+        if move is None:
+            return
+        back, year, _diff = move
+        got = frame.evaluate(MOVE_MONTH, [back, year])
+        if got is not True:
+            raise RuntimeError(
+                f"カレンダーを {want.year}年{want.month}月 へ動かせません: {got}"
+                f"（いま出ているのは {shown}）")
+        page.wait_for_timeout(250)
+    raise RuntimeError(f"カレンダーに {want.year}年{want.month}月 を出せません。")
+
+
+def open_picker(page, frame) -> None:
+    """期間のピッカーを開く。**開いたことを2回続けて確かめる。**
+
+    ボタンはトグルなので、開いているときに押すと閉じる。だから
+    「開いていなければ押す」で書くのだが、ここに落とし穴がある。
+
+    **閉じかけのピッカーは、一瞬「開いている」ように見える。**
+    直前の「適用」で閉じ始めた枠がまだ高さを持っているあいだに
+    見にいくと、開いていると判断して押さずに進み、そのあと消える。
+    次の操作が「要素が見えません」で落ちる（実測）。
+
+    500ms あけて2回続けて開いていることを条件にする。
+    """
+    for _ in range(5):
+        if frame.evaluate(DATE_PICKER_OPEN):
+            page.wait_for_timeout(500)
+            if frame.evaluate(DATE_PICKER_OPEN):
+                return
+            continue        # 消えかけだった。押し直す
+        if not open_date(page):
+            raise RuntimeError("期間のボタンが見つかりません。画面の作りが変わった可能性があります。")
+        page.wait_for_timeout(1200)
+    raise RuntimeError("期間のピッカーが開きません。")
+
+
+def pick_day(frame, want: date) -> None:
+    """カレンダーの1日を押す。押せない日なら、**理由を分けて**知らせる。"""
+    label = f"{want.year}年{want.month}月"
+    got = frame.evaluate(PICK_DAY, [label, want.day])
+    if got is True:
+        return
+    if got == "disabled":
+        raise RuntimeError(disabled_reason(want))
+    raise RuntimeError(f"{want} を選べません: {got}")
 
 
 def set_date(page, value: str, timeout_s: float) -> None:
@@ -549,32 +600,13 @@ def set_date(page, value: str, timeout_s: float) -> None:
     **1から始まる一番長い連番が当月**という決め方で選び、最後にラベルで確かめる。
     """
     frame = ui(page)
-    # ボタンはトグル。すでに開いていたら押すと閉じるので、開くまで押す
-    for _ in range(3):
-        if frame.evaluate(DATE_PICKER_OPEN):
-            break
-        if not open_date(page):
-            raise RuntimeError("期間のボタンが見つかりません。画面の作りが変わった可能性があります。")
-        page.wait_for_timeout(1200)
-    else:
-        raise RuntimeError("期間のピッカーが開きません。")
-
+    open_picker(page, frame)
     span = month_span(value)
 
-    # **暦月がプリセットと一致するなら、カレンダーを触らない。**
-    # カレンダーの月送りはアイコンで、確実に押せる手がかりが無い。
-    # 月次レポートは「先月」を撮ることがほとんどなので、まずここで済ませる。
-    # ずれていれば、あとの読み戻し検証が止める。
-    if span is not None:
-        name = preset_for(span)
-        if name:
-            print(f"[*] 期間は「{name}」で指定します（暦月と一致）")
-            if click_text(page, name):
-                if click_text(page, "適用"):
-                    settle(page, timeout_s, why=f"期間 {value}")
-                    return
-            print("[*] プリセットで指定できませんでした。カレンダーで指定します。")
-
+    # **暦月を渡されたら、プリセットに読み替えない。**
+    # 以前は「先月」と一致すればプリセットで済ませていたが、これは
+    # 実行した日に依存する。月末の23時台に始めた取得が日付をまたぐと、
+    # 「先月」の指す月がその場で1つずれる。暦月はカレンダーで指定する。
     if span is None:
         name = PRESETS.get(value)
         if name is None:
@@ -586,23 +618,27 @@ def set_date(page, value: str, timeout_s: float) -> None:
             raise RuntimeError(f"期間「{name}」が選べません。")
     else:
         start, end = span
-        if not click_text(page, "期間指定"):
+        print(f"[*] 期間はカレンダーで指定します（{start} 〜 {end}）")
+        # ピッカーが描き直されている最中は、押しても「見えない」で弾かれる。
+        # **開き直してから**試す。待つだけでは、閉じてしまった場合に戻らない。
+        for _ in range(3):
+            try:
+                if click_text(page, "期間指定"):
+                    break
+            except Exception:
+                pass
+            page.wait_for_timeout(800)
+            open_picker(page, frame)
+        else:
             raise RuntimeError("「期間指定」が選べません。")
         page.wait_for_timeout(500)
+        # **年は、月の見出しで担保している。** PICK_DAY は
+        # 「2026年8月」のように年を含む見出しと一致した表の中でしか押さない。
+        # 適用後の期間ラベルには年が無い（「08/01-08/31」）ため、
+        # ここで年をそろえておかないと、あとの検証では年のずれを見つけられない。
         for want in (start, end):
-            label = f"{want.year}年{want.month}月"
-            for _ in range(24):
-                if label in frame.evaluate(READ_MONTHS):
-                    break
-                if not frame.evaluate(MOVE_MONTH, True):
-                    raise RuntimeError("カレンダーの月送りボタンが見つかりません。")
-                frame.click(f"[{MARK}='1']", timeout=10_000)
-                page.wait_for_timeout(400)
-            else:
-                raise RuntimeError(f"カレンダーに {label} を出せません。")
-            got = frame.evaluate(PICK_DAY, [label, want.day])
-            if got is not True:
-                raise RuntimeError(f"{label}{want.day}日 を選べません: {got}")
+            show_month(frame, page, want)
+            pick_day(frame, want)
             page.wait_for_timeout(400)
 
     if not click_text(page, "適用"):
