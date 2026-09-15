@@ -6,7 +6,7 @@
 - 実サイトの非公開URL、管理画面URL、社内パス
 - GA4プロパティID、測定ID、GTMコンテナID、Spreadsheet ID
 - OAuthトークン、APIキー、Cookie、サービスアカウント
-- GA4、Search Console、Clarity等の実データ
+- GA4、Search Console、Clarity、Ptengine等の実データ
 - 納品レポート、スクリーンショット、会議資料
 
 誤ってコミットした場合、ファイルを削除するだけではGit履歴に残ります。公開を止め、認証情報を失効させ、履歴からの削除を行ってください。

@@ -14,7 +14,7 @@ CodexとClaude Codeのどちらでも利用できます。7人全員を使う必
 |---|---|---|---|
 | 01 | [計測設計・監査](consultants/01-measurement-audit/) | GA4設定、生データ、既存レポート | 計測監査・数値突合 |
 | 02 | [GA4データ解析](consultants/02-ga4-analysis/) | GA4エクスポート | KPI・変化点・セグメント分析 |
-| 03 | [行動・ヒートマップ分析](consultants/03-behavior-heatmap/) | Clarity画像、ページキャプチャ | 導線・熟読・離脱の所見 |
+| 03 | [行動・ヒートマップ分析](consultants/03-behavior-heatmap/) | Clarity / Ptengineのヒートマップ、ページキャプチャ | 導線・熟読・離脱の所見 |
 | 04 | [顧客・検索・競合調査](consultants/04-customer-search-competitor/) | Search Console、競合URL、顧客情報 | 検索意図・競合比較・顧客仮説 |
 | 05 | [課題診断・優先順位](consultants/05-issue-prioritization/) | JOB 01〜04の所見 | 課題台帳・優先順位・着手順 |
 | 06 | [UX/UI改善設計](consultants/06-ux-ui-design/) | 優先課題、証拠、制約 | 改善案・ワイヤーフレーム仕様 |
@@ -119,4 +119,4 @@ CLI AI本体の契約・利用料金は本リポジトリに含まれません�
 
 ## 免責
 
-本ツールキットは、分析結果、売上向上、計測の完全性を保証するものではありません。GA4、Google Search Console、Microsoft Clarity、Google Apps Script等の仕様変更により、手順やコードが動作しなくなる場合があります。必ずテスト環境で確認し、公開・計測変更は利用者の責任で実施してください。
+本ツールキットは、分析結果、売上向上、計測の完全性を保証するものではありません。GA4、Google Search Console、Microsoft Clarity、Ptengine、Google Apps Script等の仕様変更により、手順やコードが動作しなくなる場合があります。必ずテスト環境で確認し、公開・計測変更は利用者の責任で実施してください。

@@ -22,7 +22,7 @@ or two or three — each runs on its own.
 |---|---|---|---|
 | 01 | [Measurement audit](consultants/01-measurement-audit/) | GA4 configuration, raw data, existing reports | Audit findings, figure reconciliation |
 | 02 | [GA4 analysis](consultants/02-ga4-analysis/) | GA4 exports | KPIs, change points, segment analysis |
-| 03 | [Behaviour & heatmaps](consultants/03-behavior-heatmap/) | Clarity images, page captures | Findings on paths, attention, drop-off |
+| 03 | [Behaviour & heatmaps](consultants/03-behavior-heatmap/) | Clarity / Ptengine heatmaps, page captures | Findings on paths, attention, drop-off |
 | 04 | [Customers, search & competitors](consultants/04-customer-search-competitor/) | Search Console, competitor URLs, customer data | Search intent, competitive comparison, customer hypotheses |
 | 05 | [Issue diagnosis & prioritisation](consultants/05-issue-prioritization/) | Findings from jobs 01–04 | Issue ledger, priority, order of work |
 | 06 | [UX/UI design](consultants/06-ux-ui-design/) | Priority issues, evidence, constraints | Improvement proposals, wireframe specs |
@@ -68,6 +68,16 @@ A few examples, all of which apply outside Japan too:
   pages that do not scroll, and a date range that silently meant "the last 30
   days" rather than the month we asked for.
   → [Field notes (English summary)](docs/en/CLARITY_HEATMAP_NOTES.md)
+
+- **Ptengine has the opposite problem: nothing is in the URL.** The period,
+  device and heatmap type live in client-side state and survive a reload, so a
+  capture can silently inherit the previous run's settings and be saved under
+  the name you asked for. We read the state back off the screen before every
+  capture and refuse to shoot when it disagrees. Ptengine also draws over the
+  **live site** rather than a stored screenshot, so the page underneath is
+  whatever it is today. 19 field notes, including three conclusions we got
+  wrong first.
+  → [PTENGINE_CAPTURE.md](consultants/03-behavior-heatmap/PTENGINE_CAPTURE.md) (Japanese)
 
 - **TLS-inspecting security software breaks Python and gcloud, but not the
   browser.** Python 3.13 turned on strict X.509 checking, and many corporate
@@ -131,7 +141,7 @@ design, report generation, and quality checking.
 ## Disclaimer
 
 This toolkit does not guarantee analysis results, revenue improvement, or
-measurement completeness. GA4, Google Search Console, Microsoft Clarity, and
+measurement completeness. GA4, Google Search Console, Microsoft Clarity, Ptengine, and
 Google Apps Script change their specifications; procedures and code may stop
 working. Test before you rely on anything, and take responsibility for your own
 publishing and measurement changes.
