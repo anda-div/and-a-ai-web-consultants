@@ -101,7 +101,11 @@ python scripts/ptengine_capture_set.py \
 ```
 
 種別は クリック / 滞在 / 離脱 / コンバージョン の4つです。
-詳細と、実機で分かった16の落とし穴は [PTENGINE_CAPTURE.md](PTENGINE_CAPTURE.md) にあります。
+期間は暦月で指定します。**プリセット（先月・今月）には読み替えません。**
+実行した日に依存するため、月末の深夜に始めた取得が日付をまたぐとずれるからです。
+**遡れるのは約12か月まで**で、それより古い月はPtengine側で選べません。
+
+詳細と、実機で分かった19の落とし穴は [PTENGINE_CAPTURE.md](PTENGINE_CAPTURE.md) にあります。
 
 > **Ptengineは下敷きが実サイトです。** Clarityは保存済みのスクリーンショットに
 > 熱を重ねますが、Ptengineは撮影時点のページを読み込みます。
