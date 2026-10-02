@@ -11,11 +11,15 @@
 
 ゆるめすぎれば、何も報告しない検査になる。
 **通っても意味のない検査**にしないため、わざと壊したファイルを作り、
-8種類の欠陥それぞれを拾えることを確かめる。
+9種類の欠陥それぞれを拾えることを確かめる。
+
+文字のはみ出しは、**溢れていることと直す必要があることを分けている。**
+こぼれた先が空きなら「確認」、用紙の外・下の内容・枠の台を越えるなら「要対応」。
+ここも、分けたつもりで取りこぼさないことを確かめる。
 
 文字のはみ出しについては、**丸めた値では原理的に検出できない**という事故があった。
 枠の高さで丸めた文字高さしか持っていなかったため、「文字が枠より高い」が
-常に偽になっていた。93ページの資料で32件のはみ出しが「要対応 0 件」で通り、
+常に偽になっていた。52スライドの資料で32件のはみ出しが「要対応 0 件」で通り、
 納品後に目視で見つかっている。ここは丸める前の高さで見ていることを確かめる。
 
     python tests/test_check_layout.py
@@ -148,6 +152,30 @@ class CheckLayoutTest(unittest.TestCase):
         textbox(s, 2.0, 2.5, 12.0, 1.0, "内容はここで終わり")
         textbox(s, 1.15, 16.6, 25.2, 1.0, SUMMARY + " 下の空き")
 
+        # 9 あふれた文字が、すぐ下の内容に重なる（6と同じ溢れ方・こぼれた先だけ違う）
+        s = prs.slides.add_slide(blank)
+        textbox(s, 2.0, 3.0, 10.0, 1.2,
+                "枠の高さは1.2cmしかないのに、9ポイントの日本語を"
+                "何行も入れているため、文字は枠の下へ流れ出す。"
+                "PowerPointは開いただけでは枠を計算し直さないので、"
+                "座標だけを見ていると収まっているように見える。", size=9)
+        textbox(s, 2.0, 4.2, 10.0, 1.0, "この行に、上からこぼれた文字が重なる")
+        textbox(s, 1.15, 16.6, 25.2, 1.0, SUMMARY + " あふれが重なる")
+
+        # 10 あふれた文字が、後ろに敷いた台の外へ出る（下には何も無い）
+        #    **あふれる枠自身は透明。** 見えているのは後ろの図形で、
+        #    文字はその縁を突き破る。実案件ではこの形が最も多かった。
+        s = prs.slides.add_slide(blank)
+        panel = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Cm(2.0), Cm(2.5),
+                                   Cm(11.0), Cm(2.2))
+        panel.name = "台"
+        textbox(s, 2.3, 3.6, 10.4, 0.7,
+                "枠は透明だが、後ろに台が敷いてある。文字はこの台の下端を"
+                "越えて外へ出るため、下に何も無くても壊れて見える。"
+                "実案件では、あふれた枠は30件すべてが塗りも線も無い箱で、"
+                "見えているのは後ろの図形だった。", size=9)
+        textbox(s, 1.15, 16.6, 25.2, 1.0, SUMMARY + " 台からはみ出す")
+
         cls.path = os.path.join(d, "broken.pptx")
         prs.save(cls.path)
         cls.major, cls.minor = run_check(cls.path)
@@ -174,7 +202,33 @@ class CheckLayoutTest(unittest.TestCase):
 
     def test_文字が枠からあふれるのを拾う(self):
         """枠の高さで丸めた値しか持たないと、これは原理的に検出できない。"""
-        self.assertIn("文字あふれ", kinds(self.major, 6))
+        self.assertIn("文字あふれ", kinds(self.major + self.minor, 6))
+
+    def test_こぼれた先が空きなら確認にとどめる(self):
+        """**偽陽性ではない。** 文字は実際に溢れている。ただ誰も困らない。
+
+        章扉やタイトル枠は、枠を小さく作って余白へこぼしてある。
+        これを全部要対応にすると毎月同じものが並び、
+        **本当に危ないものがそこに埋もれる。**
+        """
+        self.assertIn("文字あふれ", kinds(self.minor, 6))
+        self.assertNotIn("文字あふれ", kinds(self.major, 6))
+
+    def test_下の内容に重なるあふれは要対応にする(self):
+        """6ページと溢れ方は同じ。違うのは、こぼれた先に文字があることだけ。"""
+        self.assertIn("文字あふれ", kinds(self.major, 9))
+        self.assertNotIn("文字あふれ", kinds(self.minor, 9))
+
+    def test_台からはみ出すあふれは要対応にする(self):
+        """**下に何も無くても、台の縁を越えれば壊れて見える。**
+
+        はじめ「下の内容に重なるか」だけで分け、ここを取りこぼした。
+        あふれる枠は透明で、見えているのは後ろに敷いた別の図形である。
+        離れた位置の注記としか重ならないため「こぼれた先は空き」と判定され、
+        画像を見るまで気づけなかった。
+        """
+        self.assertIn("文字あふれ", kinds(self.major, 10))
+        self.assertNotIn("文字あふれ", kinds(self.minor, 10))
 
     def test_文字が用紙の外へ出るのを拾う(self):
         self.assertIn("文字が用紙の外", kinds(self.major, 7))
@@ -242,8 +296,9 @@ class CheckLayoutTest(unittest.TestCase):
             body.text_frame.paragraphs[0].add_run().text = "本文の一行目"
             p = os.path.join(d, "inherit.pptx")
             prs.save(p)
-            major, _ = run_check(p, max_gap=99.0)
-            self.assertIn("文字あふれ", kinds(major))
+            major, minor = run_check(p, max_gap=99.0)
+            # 狙いは継承であって重み付けではない。拾えていれば足りる
+            self.assertIn("文字あふれ", kinds(major + minor))
 
     def test_はみ出しは前月と同じでも要対応にする(self):
         """溢れた文字に「そう作った」は無い。前月ゆずりで通してはいけない。
@@ -262,6 +317,9 @@ class CheckLayoutTest(unittest.TestCase):
                         "おなじ形で残る。前月にも在ったからという理由で"
                         "通してしまうと、一度溢れたものが毎月通り続ける。", size=9)
             t.name = "あふれる枠"
+            # **こぼれた先に内容を置く。** 空きへこぼれるだけのものは
+            # 「確認」に回るため、前月ゆずりの検証にならない。
+            textbox(s, 2.0, 4.4, 10.0, 1.0, "ここに重なる")
             prs.save(path)
             return path
 
