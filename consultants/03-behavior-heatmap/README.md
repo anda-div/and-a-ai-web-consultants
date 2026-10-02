@@ -131,6 +131,19 @@ python scripts/concat_captures.py input/clarity --out output/clarity_joined.png
 python scripts/web_capture_segments.py --url https://example.com --name output/page
 ```
 
+ページのキャプチャで分かっていること:
+
+- **ボット対策で「Access Denied」になるサイトがある**（CDN側の対策。headless で起きやすい）。
+  インストール済みの Chrome を画面ありで使う（Playwright の `channel="chrome"`,
+  `headless=False`）と通るサイトと、それでも拒否されるサイトがある。
+  拒否されるサイトは、すり抜けを試みず候補から外す。
+- **JavaScriptで後から描画されるフォームは、待ちが短いと下半分が真っ白に写る。**
+  実例では8秒待ちで欠け、15秒待ち＋ゆっくりスクロールで解消した。
+- **Cookie同意や宣伝のポップアップが、特にSP版で画面を覆う。**
+  同意はしない（押すなら「同意しない」側）。撮影の直前に、該当する文言を含む
+  `position:fixed` の要素を `display:none` にすると写らない。
+- いずれの場合も、**撮れた画像は必ず開いて見る。** エラーなく終わっても中身が欠けていることがある。
+
 要素別クリック配分を数値で取る場合は、ヒートマップ画面を開いた状態で
 `scripts/clarity_metrics_extract.js` をブラウザのコンソールに貼る（詳細は [CLARITY_METRICS.md](CLARITY_METRICS.md)）。
 
