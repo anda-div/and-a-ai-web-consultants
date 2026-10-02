@@ -20,6 +20,9 @@ Clarityのヒートマップ表示領域（`#heatmapVisual`）は独立したス
     --profile で指定したフォルダに保存され、次回以降は再利用される。
     このフォルダはGitに追加しないこと（.gitignoreに追加済みのパスを使う）。
 
+    Googleアカウントでサインインする場合は --login-plain を使う
+    （自動操作のブラウザでは、Googleのサインインが途中で進まなくなる）。
+
 【キャプチャ】
     python scripts/clarity_heatmap_capture.py \
         --project <projectId> \
@@ -397,11 +400,110 @@ def login(args: argparse.Namespace) -> None:
     print(f"認証情報を保存しました: {args.profile}")
 
 
+def profile_in_use(profile: Path) -> bool:
+    """そのプロファイルを開いているブラウザが残っているか。
+
+    同じプロファイルを2つのブラウザで開くと、後から閉じた側の状態で
+    上書きされる（サインインした内容が消える）。起動前に確かめる。
+    """
+    if sys.platform == "win32":
+        lock = profile / "lockfile"
+        if not lock.exists():
+            return False
+        try:
+            # 起動中のChromiumはこのファイルを排他で開いている
+            with open(lock, "a"):
+                pass
+        except PermissionError:
+            return True
+        return False
+    return (profile / "SingletonLock").is_symlink()
+
+
+def login_plain(args: argparse.Namespace) -> None:
+    """自動操作なしのブラウザでサインインする（Googleアカウント向け）。
+
+    --login の窓は自動操作のブラウザなので、Googleのサインインが
+    メールアドレスの次の画面から先へ進まない。撮影と同じ版のChromiumを
+    自動操作なしで開き、同じプロファイルに利用者がふつうにサインインする。
+    自動操作の目印を外してすり抜ける方法は、ボット対策の回避になるので採らない。
+    """
+    if args.channel:
+        sys.exit("--login-plain は --channel と併用できません。"
+                 "撮影と同じ版のChromiumで開くことが前提です")
+
+    profile = Path(args.profile).expanduser().resolve()
+    if profile_in_use(profile):
+        sys.exit(f"このプロファイルを開いているブラウザが残っています: {profile}\n"
+                 "閉じてからもう一度実行してください（同時に開くと上書きされます）")
+    profile.mkdir(parents=True, exist_ok=True)
+
+    # 版を合わせる。新しい版（普段のChrome等）で開くとプロファイルが
+    # 新しい形式に上がり、撮影側のChromiumで読めなくなるおそれがある
+    with sync_playwright() as pw:
+        exe = pw.chromium.executable_path
+    if not Path(exe).exists():
+        sys.exit(f"Chromiumが見つかりません: {exe}\n"
+                 "python -m playwright install chromium を実行してください")
+
+    url = f"{BASE}/projects"
+    if sys.platform == "win32":
+        # CLI AI の実行環境から直接起動すると、窓が利用者の画面に出ないことがある。
+        # PowerShell の Start-Process で起動し、前面に出す。
+        # 値は環境変数で渡し、引用符の解釈に任せない
+        import os
+        import subprocess
+        ps = (
+            "$p = Start-Process -FilePath $env:CLARITY_EXE -PassThru "
+            "-ArgumentList @(\"--user-data-dir=`\"$env:CLARITY_PROFILE`\"\", "
+            "'--no-first-run', $env:CLARITY_URL); "
+            "Start-Sleep -Seconds 3; "
+            "[void](New-Object -ComObject WScript.Shell).AppActivate($p.Id); "
+            "$p.Id"
+        )
+        env = dict(os.environ, CLARITY_EXE=exe,
+                   CLARITY_PROFILE=str(profile), CLARITY_URL=url)
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps],
+                       env=env, check=True)
+    else:
+        import subprocess
+        subprocess.Popen([exe, f"--user-data-dir={profile}", "--no-first-run", url])
+
+    print("自動操作なしのブラウザを開きました。")
+    print("タイトルの末尾が「- Chromium」の窓でClarityにサインインしてください。")
+    print("（普段の Chrome でサインインしても、このプロファイルには入りません）")
+    print("済んだら、その窓を閉じてください。")
+    print()
+
+    # 窓が閉じられたことを、プロファイルの使用中表示が消えたことで判断する
+    time.sleep(5.0)
+    deadline = time.time() + args.login_timeout
+    last = -1
+    while time.time() < deadline:
+        if not profile_in_use(profile):
+            break
+        left = int(deadline - time.time())
+        if left // 30 != last:
+            last = left // 30
+            print(f"  待機中… 残り {left // 60}分{left % 60}秒")
+        time.sleep(2.0)
+    else:
+        sys.exit("時間切れです。窓を閉じてから、もう一度実行してください。")
+
+    print(f"認証情報を保存しました: {profile}")
+    print("確かめるときは、さっきまで撮れていたページを1本撮ってください。"
+          "headless での確認は誤判定します")
+
+
 def parse_args(argv=None) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Clarityヒートマップの分割キャプチャ＆結合",
     )
     p.add_argument("--login", action="store_true", help="初回のサインインだけを行う")
+    p.add_argument(
+        "--login-plain", action="store_true",
+        help="自動操作なしのブラウザでサインインする。"
+             "Googleアカウントは --login では通らないため、こちらを使う")
     p.add_argument("--project", help="ClarityのプロジェクトID")
     p.add_argument("--page-url", help="ヒートマップの下敷きにするページのURL")
     p.add_argument(
@@ -470,7 +572,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--max-tiles", type=int, default=60, help="安全装置")
     args = p.parse_args(argv)
 
-    if not args.login:
+    if args.login and args.login_plain:
+        p.error("--login と --login-plain はどちらか一方を指定してください")
+    if not (args.login or args.login_plain):
         missing = [n for n in ("project", "page_url") if not getattr(args, n)]
         if missing:
             p.error("--" + " と --".join(m.replace("_", "-") for m in missing) + " が必要です")
@@ -481,6 +585,9 @@ def main(argv=None) -> int:
     args = parse_args(argv)
     if args.login:
         login(args)
+        return 0
+    if args.login_plain:
+        login_plain(args)
         return 0
     capture(args)
     return 0
