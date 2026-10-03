@@ -281,15 +281,29 @@ def measure_text(sh, slide, styles: "StyleBook") -> tuple[float, float]:
     box_w = cm(sh.width)
 
     height, widest = 0.0, 0.0
+    prev_size = None
     for i, par in enumerate(tf.paragraphs):
-        chain = styles.chain(slide, sh, par.level)
+        inherited = styles.chain(slide, sh, par.level)
         own = par._p.find(qn("a:pPr"))
-        if own is not None:
-            chain = [own] + chain
+        chain = [own] + inherited if own is not None else inherited
         size = styles.size_pt(chain, par) * scale
         mult, fixed = styles.line_spacing(chain)
         usable = max(box_w - ml - mr - styles.indent_cm(chain), 0.1)
         text = "".join(r.text for r in par.runs)
+        # **空の段落は、自分に付けたサイズが効かない。**
+        # 余白を作るつもりで 4pt を置いても、PowerPoint はそれを無視し、
+        # **直前の段落と同じ大きさ**で1行ぶんの高さを取る（実測）。
+        #
+        #     直前 9pt → 空段落 10.80pt    直前 14pt → 16.80pt
+        #     直前 20pt → 24.00pt          先頭にあれば既定の大きさ
+        #
+        # 指定を信じて 4pt × 1.2 = 4.8pt と見積もると、1つにつき 6pt 取りこぼす。
+        # 余白の段落が多い資料ほど、溢れているのに気づけない。
+        if not text:
+            size = (prev_size if prev_size is not None
+                    else styles.size_pt(inherited, par) * scale)
+        else:
+            prev_size = size
         w = text_width_cm(text, size)
         n = max(1, int(-(-w // usable))) if wrap else 1
         widest = max(widest, min(w, usable) if wrap else w)
@@ -445,6 +459,83 @@ def overlap_area(a: Shape, b: Shape) -> tuple[float, float, float]:
     return ow * oh, ow, oh
 
 
+def painted(sh) -> bool:
+    """塗りか線が見えている図形か。**見た目の「台」になりうるもの。**"""
+    el = sh._element
+    if el.tag.rsplit("}", 1)[-1] == "pic":
+        return True
+    sp = el.find(qn("p:spPr"))
+    if sp is None:
+        return False
+    for tag in ("a:solidFill", "a:gradFill", "a:pattFill", "a:blipFill"):
+        if sp.find(qn(tag)) is not None:
+            return True
+    ln = sp.find(qn("a:ln"))
+    if ln is not None and ln.find(qn("a:noFill")) is None:
+        if any(ln.find(qn(t)) is not None
+               for t in ("a:solidFill", "a:gradFill", "a:pattFill")):
+            return True
+    st = el.find(qn("p:style"))
+    if st is not None:
+        fr = st.find(qn("a:fillRef"))
+        if fr is not None and fr.get("idx") not in (None, "0"):
+            return True
+    return False
+
+
+def escapes_panel(s: Shape, shapes: list[Shape], tol: float = 0.05):
+    """あふれた文字が、載っている「台」の外へ出るか。出るなら台を返す。
+
+    **台は、あふれた枠そのものではない。** 実測した資料では、
+    あふれた枠は**30件すべてが塗りも線も無い透明な箱**だった。
+    見えているのは後ろに敷かれた別の図形で、文字はその台の縁を
+    突き破って外へ出る。**下に何も無くても、壊れて見える。**
+
+    はじめ「下の内容に重なるか」だけで分けたところ、ここを取りこぼした。
+    離れた位置の注記としか重ならないため「こぼれた先は空き」と判定され、
+    画像を見るまで気づけなかった。
+
+    台が複数あるときは**いちばん内側**（下端がいちばん上にあるもの）を採る。
+    用紙いっぱいの背景も条件には合うが、内側の台があればそちらが選ばれる。
+    """
+    best = None
+    for o in shapes:
+        if o is s or not painted(o.raw):
+            continue
+        # 横に含み、枠の上端を覆っているものだけを台とみなす
+        if not (o.x <= s.x + 0.3 and o.x + o.w >= s.x + s.w - 0.3
+                and o.y <= s.y + 0.3 and o.bottom >= s.y + 0.3):
+            continue
+        if best is None or o.bottom < best.bottom:
+            best = o
+    if best is None:
+        return None
+    return best if s.text_bottom > best.bottom + tol else None
+
+
+def spill_hits(s: Shape, others: list[Shape], tol: float = 0.15):
+    """枠から下へ溢れた文字が、何かに当たるか。当たる相手を返す。
+
+    **溢れた文字は、既存の重なり判定では見えない。** 図形の占める範囲は
+    枠の高さで頭打ちにしてあるため（`th = min(h, ...)`）、枠より下へ出た
+    文字はどの図形とも重ならないことになってしまう。ここだけ別に見る。
+
+    見るのは**枠の下端より下**に限る。枠の中に収まっているぶんは、
+    内寸を越えていても余白が吸っており、外の図形には当たらない。
+    """
+    top, bottom = s.bottom, s.text_bottom
+    if bottom - top <= 0.05:
+        return None
+    for o in others:
+        if o is s or not o.has_content:
+            continue
+        ow = min(s.tx + s.tw, o.tx + o.tw) - max(s.tx, o.tx)
+        oh = min(bottom, o.ty + o.th) - max(top, o.ty)
+        if ow > tol and oh > tol:
+            return o
+    return None
+
+
 def inside(inner: Shape, outer: Shape, tol: float = 0.05) -> bool:
     """inner が outer の内側に完全に収まっているか。
 
@@ -548,15 +639,22 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
     styles = StyleBook(prs)
     major, minor, same, marks = [], [], [], []
 
-    def note(n, kind, label, detail, ident, harm, always=False):
+    def note(n, kind, label, detail, ident, harm, always=False, harmless=False):
         """要対応の候補を1件記録する。前月に在ったものは「前月と同じ」へ回す。
 
         always=True のものは前月を見ない。**文字のはみ出しには「そう作った」が
         無い。** フロー図の矢印ラベルの重なりは図の作りだが、枠から溢れた文字が
         意図であることはない。前月ゆずりで通すと、一度溢れたものが毎月通り続ける。
+
+        harmless=True は「確認」へ回す。**偽陽性という意味ではない。**
+        文字は実際に溢れている。ただ、こぼれた先が空きで、
+        何にも当たらず用紙にも収まっている、というだけである。
         """
         mark = (kind, ident)
         marks.append((mark, harm))
+        if harmless:
+            minor.append((n, kind, label, detail))
+            return
         if baseline is not None and not always:
             ok, why = baseline.allows(mark, harm)
             if ok:
@@ -630,10 +728,28 @@ def check(path: str, *, max_gap: float, min_pt: float, min_img_w: float,
                 continue
             over = s.text_h - s.inner_h
             if over > text_slack:
+                # **溢れていること自体は、直す理由にならない。**
+                # 章扉やタイトル枠は、枠を小さく作って余白へこぼしてある。
+                # 実測でも確かに溢れているが、こぼれた先は空きで、誰も困らない。
+                # 全部を要対応にすると毎月同じものが並び、**本当に危ないものが
+                # そこに埋もれる。** 分ける軸は「偽陽性か」ではなく「実害があるか」。
+                hit = spill_hits(s, content)
+                panel = escapes_panel(s, shapes)
+                outside = s.text_bottom - SH > margin
+                if outside:
+                    why = "用紙の外へ出る"
+                elif hit is not None:
+                    why = f"下の「{hit.label[:16]}」に重なる"
+                elif panel is not None:
+                    why = "枠の台からはみ出す"
+                else:
+                    why = "こぼれた先は空き"
                 note(n, "文字あふれ", s.label,
                      f"枠の内寸 {s.inner_h:.2f} cm に文字 {s.text_h:.2f} cm"
-                     f"（{over:.2f} cm 超過）",
-                     s.raw.name or "", over, always=True)
+                     f"（{over:.2f} cm 超過／{why}）",
+                     s.raw.name or "", over,
+                     always=True,
+                     harmless=not (outside or hit or panel))
             below = s.text_bottom - SH
             if below > margin:
                 note(n, "文字が用紙の外", s.label,
