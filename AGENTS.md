@@ -43,6 +43,14 @@
   証明書エラーで止まる。対処は `shared/TLS_INSPECTION.md`。証明書を足すだけでは直らない
   ケースがあるので、エラー文を読み分ける。
 
+## レポート・改善提案を書くとき
+
+- 書く前に `shared/writing-standard/AIっぽさ撲滅憲法.md` を読む。
+- 出力の前に、憲法の第7章の順で全ページを点検する。機械点検は
+  `python shared/writing-standard/ai_check.py <資料>`（pptx・docx・md・txt）。
+  拾ったものは人が読んで決める。機械点検は人の点検の代わりにならない。
+- 点検した結果は、作業記録か引き継ぎに一行で残す（第26条）。
+
 ## JOB間の受け渡し
 
 - JOB 01〜04は、所見を `shared/schemas/finding.schema.json` に沿ったJSONまたはCSVで渡す。
