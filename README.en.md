@@ -90,6 +90,14 @@ A few examples, all of which apply outside Japan too:
   switching, and tells you when a remaining difference means the *old* side was
   wrong. → [shared/PORTING_RUNBOOK.md](shared/PORTING_RUNBOOK.md) (Japanese)
 
+- **A writing standard for reports and proposals.** A client agency asked us to
+  make our slides read "less like AI". Looking again, six in ten headings had
+  the form "A: B". The standard lists the patterns concretely (headings,
+  metaphorical verbs, stock phrases, uniform bullet counts, decorative layouts)
+  and sets a check to run before anything is delivered, with a script that
+  flags candidates in pptx, docx, md and txt.
+  → [shared/writing-standard/](shared/writing-standard/) (Japanese)
+
 ## Calling APIs directly from your machine
 
 If Python and `gcloud` fail with certificate errors while the browser works
