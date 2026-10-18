@@ -121,8 +121,16 @@ python scripts/build_briefing.py 2026-07   # 月初に1回。白紙から考え�
 python scripts/ledger.py --low-cost                    # まとめて1回の発注にできる候補
 python scripts/ledger.py --order-sheet --vendor 制作    # そのまま渡せる発注依頼書
 python scripts/ledger.py --status-sheet 2026-09        # 打ち合わせ用の確認シート
+python scripts/ledger.py --status-sheet 2026-10 --xlsx # お客様が直して返せる実施状況シート（Excel）
+python scripts/ledger.py --import-sheet <戻ったシート>   # 台帳との違いを表示（--apply で反映）
+python scripts/ledger.py --maybe-done <ID> --note "…"   # 撮り直したら課題が無かった提案に印
+python scripts/ledger.py --inventory 2026-10           # 巻末「提案の在庫と切り口」の材料
 python scripts/ledger.py --revisit-due 2026-12         # 再検討の期日が来た保留
 ```
+
+お客様が「今月の改善提案をお願いします」と打つと、スキル `/monthly-proposals`
+（`.claude/skills/monthly-proposals/`）が前回の提案の状況を順に聞き取り、台帳へ書き戻してから提案に進みます。
+納品時は、このフォルダを案件フォルダの `.claude/skills/` へコピーしてください。
 
 要点は3つです。
 

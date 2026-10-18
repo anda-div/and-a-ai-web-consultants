@@ -5,6 +5,13 @@ output/**
 **/output/**
 !**/input/.gitkeep
 !**/output/.gitkeep
+# 提案台帳・お客様から届いた資料（案件フォルダ側の記録）
+_ledger/
+**/_ledger/
+_input/
+**/_input/
+_proposals_inbox/
+**/_proposals_inbox/
 
 # クライアント提供のテンプレート・成果物（公開リポジトリに置かない）
 *.pptx
