@@ -74,9 +74,12 @@ def rows_for(lg, unconfirmed) -> list[dict]:
         elif unconfirmed(i):
             rank, guess = 3, "以前に挙がっていた提案です。いまの状況を教えてください"
         elif st == "実装待ち":
-            rank, guess = 4, "実施が決まったと理解しています"
+            rank, guess = 4, i.get("status_note") or "実施が決まったと理解しています"
         elif st == "提案中":
-            rank, guess = 5, "まだご返答をいただいていません"
+            # 状態の補足があれば、それがこちらの理解。「中身を変えて残す」と
+            # お答えいただいた提案に「まだご返答をいただいていません」と出すと、
+            # 聞いたことを忘れているように読める
+            rank, guess = 5, i.get("status_note") or "まだご返答をいただいていません"
         elif st == "保留":
             rank, guess = 6, (f"保留（{i.get('blocked_by') or '理由未確認'}）。"
                               f"{i.get('revisit_on') or '時期未定'} ごろ再検討の予定")

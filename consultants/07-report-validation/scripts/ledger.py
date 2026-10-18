@@ -338,6 +338,14 @@ class Ledger:
             raise ValueError(
                 "保留にするときは --blocked-by と --revisit-on が必要です。"
                 "何待ちかが書かれていないと、提案は静かに消えます。")
+        if status == "実装済み" and not on and not date_unknown:
+            # 省いたら今日、にしない。**前後比較の起点が作り話になる。**
+            # 実際に、省いたまま入れて「今日に実装済み」とシートに出かけた。
+            # 今日実装したのなら、今日の日付を明示すればよい。
+            raise ValueError(
+                "実装済みにするときは、実装日を --date YYYY-MM-DD"
+                "（おおよそなら YYYY-MM）か、分からなければ --date 不明 で指定してください。"
+                "省くと今日の日付を入れていましたが、前後比較の起点が作り話になるためやめました。")
         before = item["status"]
         item["status"] = status
         # 人が状態を確かめた印。取り込んだだけの提案と、確認シートで訂正を
@@ -352,10 +360,7 @@ class Ledger:
         if status == "実装済み":
             # 日付が分からないときに今日を入れない。**前後比較の起点を作り話にしない。**
             # 空のまま「実装日の確認待ち」として、次の実施状況シートで聞き直す。
-            if date_unknown:
-                item["implemented_on"] = None
-            else:
-                item["implemented_on"] = on or date.today().isoformat()
+            item["implemented_on"] = None if date_unknown else on
         self.log_status(item, before, status, source=source, note=note)
         return item
 
@@ -655,6 +660,8 @@ def status_sheet(lg: "Ledger", period: str) -> str:
                      "実装待ち": "実施が決まったと理解しています",
                      "保留": f"保留（{i.get('blocked_by') or '理由未確認'}）"}.get(
                 i["status"], i["status"])
+            if i["status"] in ("提案中", "実装待ち") and i.get("status_note"):
+                guess = i["status_note"]
             if i.get("maybe_done"):
                 guess = "実装済みの可能性があります。ご確認ください"
             L.append(f"| {i['id']} | {i['title']} | {i.get('effort','')} | {guess} |  |")
@@ -832,8 +839,12 @@ def main() -> int:
     ap.add_argument("--target", default="", help="対象URLで絞る")
     ap.add_argument("--set", metavar="ID", help="状態を変える提案のID")
     ap.add_argument("--status", help=" / ".join(STATUSES))
-    ap.add_argument("--date", default="", help="実装日 YYYY-MM-DD")
-    ap.add_argument("--note", default="", help="状態の補足")
+    ap.add_argument("--date", default="",
+                    help="実装日 YYYY-MM-DD（おおよそなら YYYY-MM）。分からなければ 不明。"
+                         "実装済みにするときは必須（省いても今日の日付は入れない）")
+    ap.add_argument("--note", default="",
+                    help="状態の補足。未着手・対応中の提案では、実施状況シートの"
+                         "「こちらの理解」にそのまま出るので、お客様に読まれる言葉で書く")
     ap.add_argument("--low-cost", action="store_true",
                     help="低コスト帯の未実装を表示（まとめて発注する候補）")
     ap.add_argument("--revisit-due", metavar="YYYY-MM",
