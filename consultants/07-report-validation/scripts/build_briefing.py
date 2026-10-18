@@ -38,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import ledger_import  # noqa: E402
 from ledger import (INBOX_FILE, Ledger, find_dir,  # noqa: E402
-                    kind_in_briefing, load_json)
+                    kind_in_briefing, load_json, sheet_rule)
 from report_config import load as load_config  # noqa: E402
 
 HISTORY = "angles_history.json"
@@ -150,7 +150,12 @@ def build(period: str) -> str:
     # ---------------------------------------------------------- 0
     # 「毎月必ず読む」を運用ルールにすると守られない。**機械が前段で言う。**
     # ここを飛ばして提案を書くと、実施済みの案を出し直すことになる。
-    warns = ledger_import.warnings(lg, cfg.root, load_json(INBOX_FILE), period)
+    warns = ledger_import.warnings(lg, cfg.root, load_json(INBOX_FILE), period,
+                                   sheet_rule("inbox_dir", ledger_import.SHEET_DIR))
+    notice = ledger_import.sheet_notice(lg)
+    if notice:
+        A(f"> **お知らせ**　{notice}")
+        A("")
     if warns:
         A("## 0. 先に片付けること")
         A("")
@@ -246,6 +251,65 @@ def build(period: str) -> str:
             A(f"- {i['id']}　{i['title']}")
             if i.get("status_note"):
                 A(f"    - 理由：{i['status_note']}")
+        A("")
+
+    # ---------------------------------------------------------- 1a
+    # 提案を出す前のルール。お客様に「それはもう実装済みです」と言わせない。
+    A("## 1a. 提案を出す前のルール")
+    A("")
+    A("**ここに当たる案は、今月の候補に入れません。**"
+      "お客様に「それはもう実装しています」と言わせるのは、提案の質ではなく信頼の問題です。")
+    A("")
+    closed = [i for i in lg.items if i["status"] in ("実装済み", "検証済み", "却下")]
+    if closed:
+        A(f"### 出さないもの（{len(closed)} 件）── 同じ対象・同じ切り口の新しい案も出さない")
+        A("")
+        A("| ID | 状態 | 対象 | 切り口 | 提案 |")
+        A("|---|---|---|---|---|")
+        for i in closed:
+            A(f"| {i['id']} | {i['status']} | {i.get('target','')} | "
+              f"{i.get('angle','')} | {i['title']} |")
+        A("")
+    waiting_hold = [i for i in lg.items if i["status"] == "保留"
+                    and i not in lg.revisit_due(period)]
+    if waiting_hold:
+        A(f"### 時期が来るまで出さない保留（{len(waiting_hold)} 件）")
+        A("")
+        for i in waiting_hold:
+            A(f"- {i['id']}　{i['title']}　→ 再検討 {i.get('revisit_on') or '時期未定'}")
+        A("")
+    maybe = [i for i in lg.items if i.get("maybe_done") and i["status"] in ("提案中", "実装待ち", "保留")]
+    if maybe:
+        A(f"### お客様の確認待ち（{len(maybe)} 件）── 実装済みの可能性あり。出さない")
+        A("")
+        for i in maybe:
+            A(f"- {i['id']}　{i['title']}　（{i['maybe_done'].get('note','')}）")
+        A("")
+    recheck = [i for i in lg.items if i["status"] in ("提案中", "実装待ち")
+               and not i.get("maybe_done") and not i.get("work_done_on")
+               and str(i.get("created", ""))[:7] < period]
+    if recheck:
+        A(f"### 再提示する前に、現物を確かめるもの（{len(recheck)} 件）")
+        A("")
+        A("過去のデータだけで出し直さないでください。**お客様が台帳の外で直していることがあります。**")
+        A("再提示の候補にするものは、対象ページを撮り直して、課題がまだあるかを目で確かめます。")
+        A("")
+        A("```bash")
+        A("python consultants/03-behavior-heatmap/scripts/web_capture_segments.py "
+          "--url <対象ページ> --name output/recheck/<ID>")
+        A("```")
+        A("")
+        A("課題が見当たらなければ、出さずに印を付けます（状態は変えません）。"
+          "次の実施状況シートで「実装済みの可能性あり」とお客様に確かめます。")
+        A("")
+        A("```bash")
+        A("python _scripts/report/ledger.py --maybe-done <ID> --note \"<何を見て、課題が無いと判断したか>\"")
+        A("```")
+        A("")
+        A("| ID | 対象 | 提案 | 提案した月 |")
+        A("|---|---|---|---|")
+        for i in recheck:
+            A(f"| {i['id']} | {i.get('target','')} | {i['title']} | {i.get('created','')} |")
         A("")
 
     # ---------------------------------------------------------- 1b
@@ -379,6 +443,8 @@ def build(period: str) -> str:
     A("4. 各候補について台帳を照会し、結果を併記してください。")
     A("     python _scripts/report/ledger.py --similar \"<候補の文言>\" --angle <切り口>")
     A("     新規／再提示（IDを明記）／却下済みのため出さない、のいずれかに分類。")
+    A("     「1a. 提案を出す前のルール」に当たる案は出さないでください。")
+    A("     再提示にするものは、先に対象ページを撮り直して課題が残っているか確かめてください。")
     A("5. 推測で数値を作らないでください。根拠が出せない候補は、出さずに理由を書いてください。")
     A("6. 10本から載せる3〜5本を選び、選んだ理由を書いてください。")
     A("7. 所見・改善提案・各ページの要約・エグゼクティブサマリーを全文書き起こし、")

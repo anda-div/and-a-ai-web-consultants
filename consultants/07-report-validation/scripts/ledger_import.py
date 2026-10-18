@@ -469,12 +469,26 @@ def archive(root: str, spec: dict, rel: str) -> str:
 
 
 # ---------------------------------------------------------------- 前段チェック
-def warnings(lg, root: str, spec: dict, period: str) -> list[str]:
+SHEET_DIR = "_input/実施状況"
+
+
+def warnings(lg, root: str, spec: dict, period: str,
+             sheet_dir: str = SHEET_DIR) -> list[str]:
     """レポートを作る前に出す警告。
 
     「毎月必ず読む」を運用ルールにすると守られない。**機械が前段で言う。**
     """
+    import status_sheet_xlsx   # 同じ scripts/ にある
     out = []
+    taken = {r.get("sha1") for r in (lg.data.get("status_sheets") or [])}
+    waiting = [p for p in status_sheet_xlsx.find_sheets(root, sheet_dir)
+               if status_sheet_xlsx.sha1(p) not in taken]
+    if waiting:
+        names = "、".join(os.path.basename(p) for p in waiting)
+        out.append(
+            f"お客様から戻った実施状況シートを、まだ取り込んでいません（{names}）。"
+            "先に `ledger.py --import-sheet <シート>` で違いを確かめ、反映してください。"
+            "取り込まないまま提案を書くと、実装済みの案を出し直すことになります。")
     done = {r.get("sha1") for r in (lg.data.get("imports") or [])}
     found, _skipped = scan(root, spec, done)
     if found:
@@ -500,17 +514,37 @@ def warnings(lg, root: str, spec: dict, period: str) -> list[str]:
     return out
 
 
+def sheet_notice(lg) -> str:
+    """出した実施状況シートが、まだ戻っていないときのお知らせ。
+
+    警告ではない。**シートが届かなくても、レポートは止めない。**
+    台帳の状態のまま進め、聞き取りで確かめる。
+    """
+    exports = lg.data.get("status_sheet_exports") or []
+    if not exports:
+        return ""
+    last = exports[-1]
+    back = [r for r in (lg.data.get("status_sheets") or [])
+            if (r.get("imported_on") or "") >= (last.get("exported_on") or "")]
+    if back:
+        return ""
+    return (f"{last.get('exported_on')} に出した実施状況シート（{last.get('period')}）が、"
+            "まだ戻っていません。台帳の状態のまま進めます。"
+            "提案を作る前に、前回の提案の状況をお客様に聞き取ってください。")
+
+
 def last_touched(lg) -> str:
-    """台帳が最後に動いた月。作成・実装・取り込みのどれでもよい。"""
+    """台帳が最後に動いた月。作成・実装・取り込み・状態の確認のどれでもよい。"""
     seen = []
     for i in lg.items:
-        for k in ("created", "implemented_on", "imported_on"):
+        for k in ("created", "implemented_on", "imported_on", "status_confirmed_on"):
             v = i.get(k)
             if v:
                 seen.append(str(v)[:7])
-    for r in (lg.data.get("imports") or []):
-        if r.get("imported_on"):
-            seen.append(str(r["imported_on"])[:7])
+    for key in ("imports", "status_sheets"):
+        for r in (lg.data.get(key) or []):
+            if r.get("imported_on"):
+                seen.append(str(r["imported_on"])[:7])
     return max(seen) if seen else ""
 
 

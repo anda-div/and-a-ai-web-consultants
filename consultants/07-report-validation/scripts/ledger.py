@@ -54,6 +54,7 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import ledger_import  # noqa: E402  取り込みの本体（台帳を引数で受け取る）
+import status_sheet_xlsx  # noqa: E402  お客様が直して返す実施状況シート（Excel）
 
 STATUSES = ("提案中", "実装待ち", "実装済み", "検証済み", "却下", "保留")
 
@@ -326,26 +327,67 @@ class Ledger:
 
     # ------------------------------------------------------------ 更新
     def set_status(self, pid: str, status: str, *, on: str = "",
-                   note: str = "", work_done: str = "") -> dict:
+                   note: str = "", work_done: str = "", date_unknown: bool = False,
+                   source: str = "手入力") -> dict:
         item = self.get(pid)
         if item is None:
             raise KeyError(f"台帳に {pid} がありません")
         if status not in STATUSES:
             raise ValueError(f"状態は {' / '.join(STATUSES)} のいずれかです")
+        if status == "保留" and not (item.get("blocked_by") and item.get("revisit_on")):
+            raise ValueError(
+                "保留にするときは --blocked-by と --revisit-on が必要です。"
+                "何待ちかが書かれていないと、提案は静かに消えます。")
+        before = item["status"]
         item["status"] = status
         # 人が状態を確かめた印。取り込んだだけの提案と、確認シートで訂正を
         # もらった提案を区別する。取り込んだままのものは発注依頼書へ載せない。
         item["status_confirmed_on"] = date.today().isoformat()
+        # 「実装済みの可能性あり」は、状態を確かめた時点で役目を終える
+        item.pop("maybe_done", None)
         if note:
             item["status_note"] = note
         if work_done:
             item["work_done_on"] = work_done
         if status == "実装済み":
-            item["implemented_on"] = on or date.today().isoformat()
-        if status == "保留" and not (item.get("blocked_by") and item.get("revisit_on")):
-            raise ValueError(
-                "保留にするときは --blocked-by と --revisit-on が必要です。"
-                "何待ちかが書かれていないと、提案は静かに消えます。")
+            # 日付が分からないときに今日を入れない。**前後比較の起点を作り話にしない。**
+            # 空のまま「実装日の確認待ち」として、次の実施状況シートで聞き直す。
+            if date_unknown:
+                item["implemented_on"] = None
+            else:
+                item["implemented_on"] = on or date.today().isoformat()
+        self.log_status(item, before, status, source=source, note=note)
+        return item
+
+    @staticmethod
+    def log_status(item: dict, before: str, after: str, *, source: str,
+                   note: str = "") -> None:
+        """状態を変えた経緯を残す。誰の申告で、いつ変えたか。
+
+        お客様の記入を正として台帳を書き換えるので、**後から「なぜこの状態か」を
+        たどれないと、食い違いを説明できない。**
+        """
+        rec = {"on": date.today().isoformat(), "from": before, "to": after,
+               "source": source}
+        if note:
+            rec["note"] = note
+        item.setdefault("status_log", []).append(rec)
+
+    def mark_maybe_done(self, pid: str, note: str) -> dict:
+        """対象ページを撮り直したら、課題が見当たらなかった。
+
+        状態は変えない。**実装したかどうかはお客様しか知らない。**
+        提案の再提示を止め、実施状況シートで「実装済みの可能性あり」と尋ねる。
+        """
+        item = self.get(pid)
+        if item is None:
+            raise KeyError(f"台帳に {pid} がありません")
+        if item["status"] not in ("提案中", "実装待ち", "保留"):
+            raise ValueError(f"{pid} は「{item['status']}」です。未実装の提案にだけ付けられます")
+        if not note.strip():
+            raise ValueError("--note に、何を見て課題が無いと判断したかを書いてください"
+                             "（例：2026-10 に撮り直したら、ボタンが追従していた）")
+        item["maybe_done"] = {"on": date.today().isoformat(), "note": note}
         return item
 
     def amend(self, pid: str, field: str, value: str, *, reason: str,
@@ -613,6 +655,8 @@ def status_sheet(lg: "Ledger", period: str) -> str:
                      "実装待ち": "実施が決まったと理解しています",
                      "保留": f"保留（{i.get('blocked_by') or '理由未確認'}）"}.get(
                 i["status"], i["status"])
+            if i.get("maybe_done"):
+                guess = "実装済みの可能性があります。ご確認ください"
             L.append(f"| {i['id']} | {i['title']} | {i.get('effort','')} | {guess} |  |")
         L.append("")
     done = [i for i in lg.items if i["status"] in ("実装済み", "検証済み")]
@@ -630,6 +674,141 @@ def status_sheet(lg: "Ledger", period: str) -> str:
           "  同じ提案を出し直さずに済み、状況が変わったときに出し直せます。",
           "- いま決められないものは「保留」で構いません。"
           "**何待ちかと、いつ頃また見るか**だけ決めさせてください。", ""]
+    return "\n".join(L) + "\n"
+
+
+# ---------------------------------------------------------------- 実施状況シート（Excel）
+def sheet_rule(key: str, default: str) -> str:
+    """実施状況シートの置き場。defaults/ledger_rules.json の status_sheet で変えられる。"""
+    return (RULES.get("status_sheet") or {}).get(key) or default
+
+
+def import_sheet(lg: "Ledger", path: str, *, apply: bool, period: str = "") -> int:
+    """お客様から戻ったシートを読み、台帳との違いを出す。
+
+    **既定では書き換えない。** 違いを見せ、確認を取ってから --apply で入れる。
+    確認をターミナルの入力待ちにしないのは、CLI AI の実行環境では
+    標準入力が閉じていて、input() がその場で落ちるため。
+    """
+    if not os.path.exists(path):
+        print(f"シートがありません: {path}")
+        return 1
+    try:
+        sheet_period, rows = status_sheet_xlsx.read(path)
+    except ValueError as e:
+        print(str(e))
+        return 1
+    period = period or sheet_period or date.today().isoformat()[:7]
+    digest = status_sheet_xlsx.sha1(path)
+    done = [r for r in (lg.data.get("status_sheets") or []) if r.get("sha1") == digest]
+    if done and apply:
+        print(f"このシートは {done[-1]['imported_on']} に取り込み済みです。もう一度は入れません。")
+        return 0
+    months = int((RULES.get("hold_rule") or {}).get("default_revisit_months") or 3)
+    res = status_sheet_xlsx.diff(lg, rows, period=period, revisit_months=months)
+
+    print(f"実施状況シート（{sheet_period or '対象月不明'}）と台帳の違い"
+          + ("" if apply else "　※まだ台帳には入れていません"))
+    print(f"  {path}\n")
+    if not res["changes"] and not res["conflicts"]:
+        print("違いはありません。お客様の記入と台帳は一致しています。")
+    if res["changes"]:
+        print(f"【反映するもの】{len(res['changes'])} 件　お客様の記入を正とします")
+        for ch in res["changes"]:
+            arrow = ch["before"] if ch["before"] == ch["to"] else f"{ch['before']} → {ch['to']}"
+            when = f"　実装日 {ch['date']}" if ch["date"] else ""
+            print(f"  ・{ch['id']}　{ch['title']}")
+            print(f"      {arrow}{when}")
+            if ch["note"]:
+                print(f"      補足：{ch['note']}")
+            for r in ch["remarks"]:
+                print(f"      ※ {r}")
+        print()
+    if res["conflicts"]:
+        print(f"【反映しないもの】{len(res['conflicts'])} 件　済んだものを戻す記入です")
+        for c in res["conflicts"]:
+            print(f"  ・{c['id']}　{c['title']}　台帳「{c['before']}」／シート「{c['sheet']}」")
+            print(f"      {c['why']}")
+        print()
+    if res["unreadable"]:
+        print("【実装日を読めなかったもの】推測で埋めず、実装日の確認待ちにします")
+        for pid, raw in res["unreadable"]:
+            print(f"  ・{pid}　「{raw}」")
+        print()
+    if res["unknown"]:
+        print("【台帳に無いもの】" + "、".join(res["unknown"]))
+        print()
+
+    if not apply:
+        if res["changes"]:
+            print("内容をお客様（または担当者）に確かめてから、次で反映してください。")
+            print(f"  python ledger.py --import-sheet \"{path}\" --apply")
+        return 0
+
+    status_sheet_xlsx.apply(lg, res["changes"], source=f"実施状況シート {sheet_period}".strip())
+    lg.data.setdefault("status_sheets", []).append(
+        {"file": os.path.basename(path), "sha1": digest, "period": sheet_period,
+         "imported_on": date.today().isoformat(), "applied": len(res["changes"]),
+         "held": len(res["conflicts"])})
+    lg.save()
+    print(f"台帳へ反映しました：{len(res['changes'])} 件")
+    if res["conflicts"]:
+        print(f"反映しなかったもの {len(res['conflicts'])} 件は、確かめてから --set で直してください。")
+    return 0
+
+
+def inventory(lg: "Ledger", period: str, ldir: str) -> str:
+    """レポート巻末「提案の在庫と切り口」の材料。
+
+    慣れていないお客様ほど「来月も案が出てくるのか」が不安になる。
+    **在庫があること、まだ使っていない切り口があることを、目で確かめられるようにする。**
+    """
+    L = [f"# 提案の在庫と切り口（{period}）", ""]
+    groups = (("未着手", "提案中"), ("対応中", "実装待ち"), ("保留", "保留"))
+    L += ["## 提案の在庫", "", "| 区分 | 件数 |", "|---|---|"]
+    for label, st in groups:
+        L.append(f"| {label} | {sum(1 for i in lg.items if i['status'] == st)} |")
+    done = sum(1 for i in lg.items if i["status"] in ("実装済み", "検証済み"))
+    L += [f"| 実装済み | {done} |", ""]
+    holds = [i for i in lg.items if i["status"] == "保留"]
+    if holds:
+        L += ["### 保留の再検討時期", ""]
+        for i in sorted(holds, key=lambda x: x.get("revisit_on") or "9999"):
+            L.append(f"- {i['id']}　{i['title']}　→ {i.get('revisit_on') or '時期未定'}"
+                     f"（{i.get('blocked_by') or '理由未確認'}）")
+        L.append("")
+
+    cat = load_json(CATALOG_FILE)
+    hist_path = os.path.join(ldir, "angles_history.json")
+    used = {}
+    if os.path.exists(hist_path):
+        with io.open(hist_path, encoding="utf-8") as f:
+            for e in (json.load(f).get("used") or []):
+                for k in e.get("angles") or []:
+                    used.setdefault(k, []).append(e.get("period", ""))
+    angles = cat.get("angles") or []
+    if angles:
+        this = [a for a in angles if period in used.get(a["key"], [])]
+        fresh = [a for a in angles if a["key"] not in used]
+        L += ["## 切り口の使用状況", "",
+              f"切り口の一覧 {len(angles)} 本のうち、使ったもの {len(angles) - len(fresh)} 本・"
+              f"まだ使っていないもの {len(fresh)} 本。", ""]
+        if this:
+            L.append("今月の切り口：" + "、".join(a["name"] for a in this))
+            L.append("")
+        if fresh:
+            L.append("まだ使っていない切り口（例）：" + "、".join(a["name"] for a in fresh[:8]))
+            L.append("")
+    verified = [i for i in lg.items if i["status"] == "検証済み" and i.get("verification")]
+    if verified:
+        L += ["## 効果の検証から生まれた次の案", "",
+              "効いた案は他のページへ広げ、効かなかった案は別の手を試します。", ""]
+        for i in verified:
+            v = i["verification"]
+            L.append(f"- {i['id']}　{i['title']}：{v.get('metric','')} "
+                     f"{v.get('before','')} → {v.get('after','')}"
+                     + (f"（{v['note']}）" if v.get("note") else ""))
+        L.append("")
     return "\n".join(L) + "\n"
 
 
@@ -706,6 +885,22 @@ def main() -> int:
                     help="こちら側の作業が終わった日 YYYY-MM-DD。"
                          "公開待ちのものを発注依頼書から外す。"
                          "前後比較の起点は公開日（--date）のほう")
+    ap.add_argument("--source", default="手入力",
+                    help="--set で、誰の申告で変えたか（例：チャット、定例会）。経緯として残す")
+    ap.add_argument("--xlsx", action="store_true",
+                    help="--status-sheet を、お客様が直して返せる Excel で出す")
+    ap.add_argument("--out", default="",
+                    help="--xlsx の出力先（既定 _ledger/実施状況シート/実施状況シート_YYYY-MM.xlsx）")
+    ap.add_argument("--import-sheet", metavar="xlsx",
+                    help="お客様から戻った実施状況シートと台帳の違いを表示する。"
+                         "反映は --apply を付けて、確認を取ってから")
+    ap.add_argument("--apply", action="store_true",
+                    help="--import-sheet の違いを台帳へ反映する")
+    ap.add_argument("--maybe-done", metavar="ID",
+                    help="撮り直したら課題が見当たらなかった提案に印を付ける。"
+                         "状態は変えず、次の実施状況シートで確かめる（--note 必須）")
+    ap.add_argument("--inventory", metavar="YYYY-MM",
+                    help="レポート巻末「提案の在庫と切り口」の材料を出す")
     a = ap.parse_args()
 
     lg = Ledger(a.path)
@@ -809,8 +1004,12 @@ def main() -> int:
             print("こちらの理解を記入した一覧を出し、**違うところだけ訂正してもらいます。**")
         return 1 if res["incomplete"] else 0
 
-    if a.check:
-        warns = ledger_import.warnings(lg, root, spec, a.check)
+    if a.check and not a.import_sheet:
+        warns = ledger_import.warnings(lg, root, spec, a.check,
+                                       sheet_rule("inbox_dir", ledger_import.SHEET_DIR))
+        notice = ledger_import.sheet_notice(lg)
+        if notice:
+            print(f"お知らせ：{notice}\n")
         if not warns:
             print(f"{a.check}　レポートを書く前の確認：問題ありません。")
             return 0
@@ -931,9 +1130,12 @@ def main() -> int:
             target["blocked_by"] = a.blocked_by
         if a.revisit_on:
             target["revisit_on"] = a.revisit_on
+        # 「実装済みだが日付は分からない」を今日の日付で埋めない
+        unknown = a.date.strip().lower() in ("unknown", "不明", "未確認")
         try:
-            item = lg.set_status(a.set, a.status, on=a.date, note=a.note,
-                                 work_done=a.work_done)
+            item = lg.set_status(a.set, a.status, on="" if unknown else a.date,
+                                 note=a.note, work_done=a.work_done,
+                                 date_unknown=unknown, source=a.source)
         except ValueError as e:
             print(str(e))
             return 1
@@ -978,8 +1180,46 @@ def main() -> int:
                           deadline=a.deadline, vendor=a.vendor))
         return 0
 
+    if a.status_sheet and a.xlsx:
+        out = a.out or os.path.join(ldir, sheet_rule("out_dir", "実施状況シート"),
+                                    f"実施状況シート_{a.status_sheet}.xlsx")
+        n = status_sheet_xlsx.export(lg, a.status_sheet, out, unconfirmed_import)
+        lg.data.setdefault("status_sheet_exports", []).append(
+            {"period": a.status_sheet, "file": os.path.basename(out),
+             "exported_on": date.today().isoformat(), "rows": n})
+        lg.save()
+        inbox = sheet_rule("inbox_dir", "_input/実施状況")
+        print(f"実施状況シートを出しました（{n} 件）: {out}")
+        print()
+        print("お客様には、黄色の列（状態・実装日・補足）の**違うところだけ**を直してもらいます。")
+        print(f"戻ってきたシートは {inbox}/ に置き、レポートを作る前に取り込んでください。")
+        print("  python ledger.py --import-sheet <戻ってきたシート>")
+        return 0
+
     if a.status_sheet:
         print(status_sheet(lg, a.status_sheet))
+        return 0
+
+    if a.import_sheet:
+        return import_sheet(lg, a.import_sheet, apply=a.apply,
+                            period=a.check or "")
+
+    if a.maybe_done:
+        try:
+            item = lg.mark_maybe_done(a.maybe_done, a.note)
+        except (KeyError, ValueError) as e:
+            print(str(e))
+            return 1
+        lg.save()
+        print(f"印を付けました　{item['id']}　{item['title']}")
+        print(f"  見たもの：{a.note}")
+        print()
+        print("状態は変えていません。**実装したかどうかは、お客様しか知りません。**")
+        print("この提案は再提示せず、次の実施状況シートで「実装済みの可能性あり」と確かめます。")
+        return 0
+
+    if a.inventory:
+        print(inventory(lg, a.inventory, ldir))
         return 0
 
     if a.revisit_due:

@@ -17,8 +17,8 @@ jobs:
           python-version: "3.12"
       - name: Python syntax
         run: python -m compileall -q consultants tools
-      - name: 画像処理のテストに要るものだけ入れる
-        run: pip install "Pillow>=10,<12" "numpy>=1.26,<3"
+      - name: 画像処理・Excelのテストに要るものだけ入れる
+        run: pip install "Pillow>=10,<12" "numpy>=1.26,<3" "openpyxl>=3.1,<4"
       - name: Unit tests
         run: |
           python consultants/02-ga4-analysis/tests/test_analyze_ga4.py
@@ -27,6 +27,9 @@ jobs:
           python consultants/06-ux-ui-design/tests/test_build_action_specs.py
           python consultants/07-report-validation/tests/test_compare_periods.py
           python consultants/07-report-validation/tests/test_check_layout.py
+          python consultants/07-report-validation/tests/test_ledger.py
+          python consultants/07-report-validation/tests/test_ledger_import.py
+          python consultants/07-report-validation/tests/test_status_sheet.py
           python consultants/03-behavior-heatmap/tests/test_heatmap_image.py
           python consultants/03-behavior-heatmap/tests/test_ptengine_dates.py
           python consultants/03-behavior-heatmap/tests/test_clarity_login.py
