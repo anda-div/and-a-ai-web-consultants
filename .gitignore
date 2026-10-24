@@ -28,6 +28,8 @@ _templates/
 **/.clarity_profile/
 .ptengine_profile/
 **/.ptengine_profile/
+.sc_profile/
+**/.sc_profile/
 project_config.json
 **/project_config.json
 .env

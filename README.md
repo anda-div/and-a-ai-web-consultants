@@ -84,6 +84,11 @@ Search Console も**公式APIがあり、同じ認証の仕組みで自動化で
 注意点は [shared/SEARCH_CONSOLE_LOCAL_FETCH.md](shared/SEARCH_CONSOLE_LOCAL_FETCH.md) に
 あります。この2つで、月次レポートの数値データ収集は全自動になります。
 
+Search Console の **SNS プロパティ（Instagram など）は、API がまだ対応していません。**
+画面の書き出しをブラウザ操作で取る部品と手順を
+[shared/SEARCH_CONSOLE_PLATFORM_EXPORT.md](shared/SEARCH_CONSOLE_PLATFORM_EXPORT.md) に置いています。
+API が対応したら、自動で API での取得に切り替わります。
+
 共通部品は `shared/scripts/ga4_client.py`（認証・再試行・GASと同じ丸め・xlsx書き出し）と
 `shared/scripts/compare_xlsx.py`（全セル突き合わせ）です。**どのシートをどう作るかは
 案件ごとに違う**ため、そこは各案件で書きます。

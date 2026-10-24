@@ -33,5 +33,6 @@ jobs:
           python consultants/03-behavior-heatmap/tests/test_heatmap_image.py
           python consultants/03-behavior-heatmap/tests/test_ptengine_dates.py
           python consultants/03-behavior-heatmap/tests/test_clarity_login.py
+          python shared/tests/test_sc_platform_export.py
       - name: Public safety scan
         run: python tools/public_scan.py .
