@@ -122,6 +122,7 @@ python scripts/ledger.py --low-cost                    # まとめて1回の発�
 python scripts/ledger.py --order-sheet --vendor 制作    # そのまま渡せる発注依頼書
 python scripts/ledger.py --status-sheet 2026-09        # 打ち合わせ用の確認シート
 python scripts/ledger.py --status-sheet 2026-10 --xlsx # お客様が直して返せる実施状況シート（Excel）
+python scripts/ledger.py --status-sheet 2026-10 --xlsx --dry-run  # 試し出し（出したことを記録しない）
 python scripts/ledger.py --import-sheet <戻ったシート>   # 台帳との違いを表示（--apply で反映）
 python scripts/ledger.py --maybe-done <ID> --note "…"   # 撮り直したら課題が無かった提案に印
 python scripts/ledger.py --inventory 2026-10           # 巻末「提案の在庫と切り口」の材料

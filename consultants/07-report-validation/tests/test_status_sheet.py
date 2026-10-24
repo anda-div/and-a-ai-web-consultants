@@ -188,6 +188,32 @@ class 取り込み(Base):
         self.assertEqual(self.diff()["unknown"], ["P-1999-01-001"])
 
 
+class 試し出し(Base):
+    def run_cli(self, *extra):
+        self.lg.save()
+        out = os.path.join(self.root, "試し", "シート.xlsx")
+        r = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "scripts", "ledger.py"),
+             "--path", self.lg.path, "--status-sheet", "2026-10", "--xlsx", "--out", out, *extra],
+            capture_output=True, text=True, encoding="utf-8")
+        return r, out
+
+    def test_dry_runならシートは出るが_出したことは記録しない(self):
+        self.add()
+        r, out = self.run_cli("--dry-run")
+        self.assertEqual(r.returncode, 0)
+        self.assertTrue(os.path.exists(out))
+        lg = L.Ledger(self.lg.path)
+        self.assertEqual(lg.data.get("status_sheet_exports") or [], [])
+        self.assertEqual(ledger_import.sheet_notice(lg), "")   # 次の確認で「戻っていない」と出ない
+
+    def test_dry_runを付けなければ記録する(self):
+        self.add()
+        r, _out = self.run_cli()
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(len(L.Ledger(self.lg.path).data["status_sheet_exports"]), 1)
+
+
 class 実装日を作り話にしない(Base):
     def test_日付を省いて実装済みにすると止まる(self):
         a = self.add()
