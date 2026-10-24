@@ -302,11 +302,55 @@ def browser_export(resource: str, start: date, end: date, out: Path, profile: Pa
                 raise RuntimeError("「CSV をダウンロード」が見つかりません（画面の作りが変わった可能性）")
             with page.expect_download(timeout=int(timeout * 1000)) as dl:
                 item.click()
-            zpath = out / (dl.value.suggested_filename or "export.zip")
+            # 手で置いた zip（out 直下）と取り違えないよう、分けて保存する
+            zpath = out / "_download" / (dl.value.suggested_filename or "export.zip")
+            zpath.parent.mkdir(exist_ok=True)
             dl.value.save_as(str(zpath))
-            return {"zip": zpath.name, "data_since": since, "url": url}
+            return {"zip": f"_download/{zpath.name}", "data_since": since, "url": url}
         finally:
             ctx.close()
+
+
+def period_in_files(out: Path) -> str:
+    """書き出しに入っている「フィルタ.csv」の期間（2026/10/15-2026/10/23）を読む。
+
+    **フォルダ名や指定は、中身の期間の証拠にならない。** Clarity では「過去30日間」の
+    まま撮って、フォルダ名だけが対象月になっていたことがある。書き出しそのものが
+    持っている期間を読み、指定と突き合わせる。
+    """
+    for name in ("フィルタ.csv", "Filters.csv"):
+        p = out / name
+        if not p.exists():
+            continue
+        with io.open(p, encoding="utf-8-sig") as f:
+            for row in csv.reader(f):
+                if len(row) >= 2 and row[0] in ("日付", "Date"):
+                    return row[1].strip()
+    return ""
+
+
+def first_day_in_files(out: Path) -> str:
+    """日別の CSV の最初の日付。プロパティの集計開始日の手がかりにする。
+
+    画面の「○月○日以降」の表示は、2026-10 の実画面では出なかった（期間の頭に
+    データが無くても、グラフが登録日から始まるだけ）。そこで書き出しの中身から読む。
+    日別のファイルは名前で探さない。実画面では「平均読み込み時間のチャート.csv」
+    という、中身と合わない名前で書き出された。**見出しの1列目が「日付」のもの**を使う。
+    """
+    for p in sorted(out.glob("*.csv")):
+        with io.open(p, encoding="utf-8-sig") as f:
+            rows = list(csv.reader(f))
+        if not rows or rows[0][:1] not in (["日付"], ["Date"]):
+            continue
+        days = [r[0] for r in rows[1:] if r and re.fullmatch(r"\d{4}-\d{2}-\d{2}", r[0])]
+        if days:
+            return min(days)
+    return ""
+
+
+def same_period(text: str, start: date, end: date) -> bool:
+    want = f"{start:%Y/%m/%d}-{end:%Y/%m/%d}"
+    return text.replace(" ", "") == want
 
 
 def unpack(zpath: Path, out: Path) -> list[str]:
@@ -335,6 +379,7 @@ def export_one(resource: str, start: date, end: date, base: Path, *, profile: Pa
     placed = sorted(out.glob("*.zip"))
     if placed and not do_discover:
         rec.update(method="manual", files=unpack(placed[-1], out), source=placed[-1].name)
+        check_period(rec, out, start, end)
         return rec
 
     if use_api and not do_discover:
@@ -353,11 +398,26 @@ def export_one(resource: str, start: date, end: date, base: Path, *, profile: Pa
         rec.update(method="discover", files=[Path(got["discover"]).name, "_discover.png"])
         return rec
     zpath = out / got["zip"]
-    rec.update(method="browser", files=unpack(zpath, out), source=zpath.name,
+    rec.update(method="browser", files=unpack(zpath, out), source=got["zip"],
                data_since=got["data_since"], url=got["url"])
-    if not rec["data_since"]:
-        rec["note"] = "集計開始日の表示を読めなかった（表示が無い＝期間の全体が集計済みの可能性）"
+    check_period(rec, out, start, end)
     return rec
+
+
+def check_period(rec: dict, out: Path, start: date, end: date) -> None:
+    """書き出しの期間を記録し、指定と違えば止める。"""
+    got = period_in_files(out)
+    rec["period_in_file"] = got
+    if got and not same_period(got, start, end):
+        raise RuntimeError(f"書き出しの期間が指定と違います（書き出し {got}／指定 {start}〜{end}）。"
+                           "画面の期間を確かめてください")
+    first = first_day_in_files(out)
+    rec["first_day_in_file"] = first
+    if not rec.get("data_since") and first and first > start.isoformat():
+        # 期間の頭にデータが無い。登録日より前は集計されないため、正常のことが多い
+        rec["data_since"] = first
+        rec["note"] = (f"{start} から、{first} の前日まではデータがありません。"
+                       "プロパティを登録した日より前は集計されないため、正常のことが多い")
 
 
 def main(argv=None) -> int:

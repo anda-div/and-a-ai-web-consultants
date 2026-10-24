@@ -49,6 +49,48 @@ class 集計開始日(unittest.TestCase):
         self.assertEqual(S.data_since("検索パフォーマンス"), "")
 
 
+class 書き出しの中身(unittest.TestCase):
+    """2026-10 の実画面の書き出しと同じ形で確かめる。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.out = Path(self.tmp.name)
+        (self.out / "フィルタ.csv").write_text(
+            "フィルタ,値\n検索タイプ,ウェブ（テキストベース）\n日付,2026/10/01-2026/10/23\n",
+            encoding="utf-8-sig")
+        # 日別の数字が、中身と合わない名前で書き出されていた
+        (self.out / "平均読み込み時間のチャート.csv").write_text(
+            "日付,クリック数,表示回数,CTR,掲載順位\n2026-10-15,2,65,3.08%,6.9\n"
+            "2026-10-16,0,50,0%,7.6\n", encoding="utf-8-sig")
+        (self.out / "クエリ.csv").write_text("上位のクエリ,クリック数\nx,1\n", encoding="utf-8-sig")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_期間を書き出しから読み_指定と合えば記録する(self):
+        rec = {}
+        S.check_period(rec, self.out, date(2026, 10, 1), date(2026, 10, 23))
+        self.assertEqual(rec["period_in_file"], "2026/10/01-2026/10/23")
+
+    def test_期間が指定と違えば止める(self):
+        with self.assertRaises(RuntimeError):
+            S.check_period({}, self.out, date(2026, 9, 1), date(2026, 9, 30))
+
+    def test_集計開始日は日別のCSVの最初の日付から読む_ファイル名には頼らない(self):
+        rec = {}
+        S.check_period(rec, self.out, date(2026, 10, 1), date(2026, 10, 23))
+        self.assertEqual(rec["first_day_in_file"], "2026-10-15")
+        self.assertEqual(rec["data_since"], "2026-10-15")
+        self.assertIn("登録した日", rec["note"])
+
+    def test_期間の頭からデータがあれば集計開始日は書かない(self):
+        rec = {}
+        (self.out / "フィルタ.csv").write_text(
+            "フィルタ,値\n日付,2026/10/15-2026/10/23\n", encoding="utf-8-sig")
+        S.check_period(rec, self.out, date(2026, 10, 15), date(2026, 10, 23))
+        self.assertEqual(rec.get("data_since", ""), "")
+
+
 class 取得の流れ(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
