@@ -871,7 +871,8 @@ def main() -> int:
                     help="埋まった下書きを台帳へ入れる。"
                          "target × angle で重複を判定し、原本を _archive/ へ退避する")
     ap.add_argument("--dry-run", action="store_true",
-                    help="--import-apply で、台帳に書かずに結果だけ見る")
+                    help="台帳に書かずに結果だけ見る。--import-apply と、"
+                         "--status-sheet --xlsx の試し出し（出したことを記録しない）で使う")
     ap.add_argument("--check", metavar="YYYY-MM",
                     help="レポートを書く前の警告（未取り込みの原本／台帳の放置）")
     ap.add_argument("--amend", metavar="ID",
@@ -1195,6 +1196,13 @@ def main() -> int:
         out = a.out or os.path.join(ldir, sheet_rule("out_dir", "実施状況シート"),
                                     f"実施状況シート_{a.status_sheet}.xlsx")
         n = status_sheet_xlsx.export(lg, a.status_sheet, out, unconfirmed_import)
+        if a.dry_run:
+            # 試し出しを「お客様に出した」と記録すると、次の --check が
+            # 「シートが戻っていない」と知らせてしまう。見た目の確認だけのときは記録しない
+            print(f"実施状況シートを試しに出しました（{n} 件）: {out}")
+            print("※ --dry-run のため、台帳には「出した」と記録していません。"
+                  "お客様に送るときは --dry-run を付けずに出し直してください。")
+            return 0
         lg.data.setdefault("status_sheet_exports", []).append(
             {"period": a.status_sheet, "file": os.path.basename(out),
              "exported_on": date.today().isoformat(), "rows": n})
