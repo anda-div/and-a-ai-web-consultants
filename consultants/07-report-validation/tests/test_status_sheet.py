@@ -13,6 +13,7 @@
 import contextlib
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -185,6 +186,45 @@ class 取り込み(Base):
         self.export()
         self.edit(a["id"], 提案ID="P-1999-01-001")
         self.assertEqual(self.diff()["unknown"], ["P-1999-01-001"])
+
+
+class 実装日を作り話にしない(Base):
+    def test_日付を省いて実装済みにすると止まる(self):
+        a = self.add()
+        with self.assertRaises(ValueError):
+            self.lg.set_status(a["id"], "実装済み")
+        self.assertEqual(a["status"], "提案中")      # 止まったときは何も変えない
+        self.assertNotIn("status_log", a)
+
+    def test_不明なら空のまま_日付があればその日(self):
+        a = self.add()
+        b = self.add()
+        self.lg.set_status(a["id"], "実装済み", date_unknown=True)
+        self.lg.set_status(b["id"], "実装済み", on="2026-09")
+        self.assertIsNone(a["implemented_on"])
+        self.assertEqual(b["implemented_on"], "2026-09")
+
+    def test_コマンドでも_日付を省くと止まり台帳は変わらない(self):
+        a = self.add()
+        self.lg.save()
+        r = subprocess.run(
+            [sys.executable, os.path.join(ROOT, "scripts", "ledger.py"),
+             "--path", self.lg.path, "--set", a["id"], "--status", "実装済み"],
+            capture_output=True, text=True, encoding="utf-8")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--date 不明", r.stdout)
+        self.assertEqual(L.Ledger(self.lg.path).get(a["id"])["status"], "提案中")
+
+
+class こちらの理解(Base):
+    def test_状態の補足があれば_それを出す(self):
+        a = self.add(status_note="中身を変えて残すと伺っています。改訂版をお持ちします")
+        b = self.add()
+        self.export()
+        rows = {r["提案ID"]: r for r in S.read(self.path)[1]}
+        self.assertEqual(rows[a["id"]]["こちらの理解"], a["status_note"])
+        self.assertEqual(rows[b["id"]]["こちらの理解"], "まだご返答をいただいていません")
+        self.assertIn(a["status_note"], L.status_sheet(self.lg, "2026-10"))
 
 
 class 実装済みの可能性あり(Base):
